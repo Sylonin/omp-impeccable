@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Type-check against `@oh-my-pi/pi-coding-agent` 18.3.
-- Run Impeccable skill scripts under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
+- Run the bundled `impeccable` CLI (`/impeccable install`, `/impeccable update`) under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
+- Run live mode through the skill's `scripts/impeccable <verb>` launcher (`live`, `live-poll`, `live-status`, `live-server`, `live-complete`). Current Impeccable skills no longer ship the `live*.mjs` scripts. Projects with an older installed skill must run `/impeccable update` first.
 - Catch failures in the live poll `close` and `error` handlers and show them as a live error, so a throw no longer ends the OMP session.
 - Clear the transient status line with OMP's managed `ctx.setTimeout` instead of a raw timer.
 - Add `aside` live delivery (`/impeccable live --delivery=aside`), which adds events at the next agent step without skipping running tool calls. `steer` stays the default.

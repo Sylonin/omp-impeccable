@@ -55,8 +55,9 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     ctxRef = undefined;
 
     if (wasActive && skillRoot) {
-      await runNode(
-        script(skillRoot, 'live-server.mjs'),
+      await runLauncher(
+        skillRoot,
+        'live-server',
         ['stop'],
         cwd,
         undefined,
@@ -94,7 +95,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     return {
       block: true,
       reason:
-        'Impeccable live polling is managed by the omp-impeccable extension in the background. Do not run live-poll.mjs as a foreground bash tool.',
+        'Impeccable live polling is managed by the omp-impeccable extension in the background. Do not run impeccable live-poll as a foreground bash tool.',
     };
   });
 
@@ -187,8 +188,9 @@ export default function impeccableExtension(pi: ExtensionAPI) {
         argv.push('--data', JSON.stringify(params.data));
       if (params.message) argv.push(params.message);
 
-      const result = await runNode(
-        script(skillRoot, 'live-poll.mjs'),
+      const result = await runLauncher(
+        skillRoot,
+        'live-poll',
         argv,
         ctx.cwd,
         signal,
@@ -234,8 +236,9 @@ export default function impeccableExtension(pi: ExtensionAPI) {
         );
       const argv = ['--id', params.id];
       if (params.discarded) argv.push('--discarded');
-      const result = await runNode(
-        script(skillRoot, 'live-complete.mjs'),
+      const result = await runLauncher(
+        skillRoot,
+        'live-complete',
         argv,
         ctx.cwd,
         signal,
@@ -280,8 +283,9 @@ async function startLive(
   live.delivery = readDelivery(tokens) ?? 'steer';
   live.cwd = ctx.cwd;
   live.skillRoot = skillRoot;
-  const boot = await runNode(
-    script(skillRoot, 'live.mjs'),
+  const boot = await runLauncher(
+    skillRoot,
+    'live',
     [],
     ctx.cwd,
     undefined,
@@ -334,8 +338,9 @@ async function stopLive(
       'warning',
     );
   }
-  const stopped = await runNode(
-    script(skillRoot, 'live-server.mjs'),
+  const stopped = await runLauncher(
+    skillRoot,
+    'live-server',
     ['stop'],
     ctx.cwd,
     undefined,
@@ -366,8 +371,9 @@ async function showLiveStatus(
       'Impeccable skill is not installed. Run /impeccable install.',
       'warning',
     );
-  const status = await runNode(
-    script(skillRoot, 'live-status.mjs'),
+  const status = await runLauncher(
+    skillRoot,
+    'live-status',
     [],
     ctx.cwd,
     undefined,
@@ -437,9 +443,9 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
   if (live.poll) return;
   const cwd = live.cwd ?? ctx.cwd;
   const child = spawn(
-    process.execPath,
-    [script(live.skillRoot, 'live-poll.mjs')],
-    { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: runtimeEnv() },
+    join(live.skillRoot, 'scripts', 'impeccable'),
+    ['live-poll'],
+    { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   live.poll = child;
   let stdout = '';
@@ -822,16 +828,13 @@ function pathContract(skillRoot: string) {
     'Use the Impeccable files installed by the upstream Impeccable package, not vendored extension files.',
     `Skill root: ${skillRoot}`,
     `Scripts: ${join(skillRoot, 'scripts')}`,
-    'Whenever upstream Impeccable docs mention `node .agents/skills/impeccable/scripts/...`, run the matching script from `Scripts` instead.',
+    'Whenever upstream Impeccable docs mention `.agents/skills/impeccable/scripts/impeccable`, run the `impeccable` launcher from `Scripts` instead.',
   ].join('\n');
 }
 
 function isForegroundLivePoll(command: string) {
   if (command.includes('--reply')) return false;
-  return (
-    /live-poll\.mjs\b/.test(command) ||
-    /\b(?:npx\s+[^\n;]*\s+)?impeccable\s+poll\b/.test(command)
-  );
+  return /\bimpeccable\s+(?:live-)?poll\b/.test(command);
 }
 
 function readDelivery(tokens: string[]): Delivery | undefined {
@@ -1207,10 +1210,6 @@ function projectRoot(cwd: string) {
   return resolve(cwd);
 }
 
-function script(skillRoot: string, name: string) {
-  return join(skillRoot, 'scripts', name);
-}
-
 function resolveImpeccableCli() {
   try {
     let current = dirname(require.resolve('impeccable'));
@@ -1246,27 +1245,21 @@ function runImpeccable(
       );
 }
 
-function runNode(
-  scriptPath: string,
+function runLauncher(
+  skillRoot: string,
+  verb: string,
   args: string[],
   cwd: string,
   signal?: AbortSignal,
   timeoutMs = 30_000,
 ) {
   return runProcess(
-    process.execPath,
-    [scriptPath, ...args],
+    join(skillRoot, 'scripts', 'impeccable'),
+    [verb, ...args],
     cwd,
     signal,
     timeoutMs,
   );
-}
-
-// Compiled omp binaries are process.execPath; BUN_BE_BUN makes them run scripts as Bun.
-function runtimeEnv(): NodeJS.ProcessEnv {
-  return process.versions.bun
-    ? { ...process.env, BUN_BE_BUN: '1' }
-    : process.env;
 }
 
 function runProcess(
@@ -1281,7 +1274,11 @@ function runProcess(
       const child = spawn(command, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: command === process.execPath ? runtimeEnv() : process.env,
+        // Compiled omp binaries are process.execPath; BUN_BE_BUN makes them run scripts as Bun.
+        env:
+          command === process.execPath && process.versions.bun
+            ? { ...process.env, BUN_BE_BUN: '1' }
+            : process.env,
       });
       let stdout = '';
       let stderr = '';

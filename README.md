@@ -8,7 +8,7 @@ Run Impeccable skills from OMP without blocking the agent.
 
 `omp-impeccable` is a native OMP plugin for the upstream [`impeccable`](https://github.com/pbakaus/impeccable) package. It installs or updates the Impeccable skill in your project, exposes `/impeccable` inside OMP, and runs Impeccable live mode in the background.
 
-That means you can keep chatting with the agent while Impeccable watches the browser, queues design feedback, and asks OMP to respond. No long-running `live-poll.mjs` command holds the shell hostage.
+That means you can keep chatting with the agent while Impeccable watches the browser, queues design feedback, and asks OMP to respond. No long-running `impeccable live-poll` command holds the shell hostage.
 
 ## Why use this?
 

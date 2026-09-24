@@ -90,7 +90,7 @@ describe('impeccable extension', () => {
     fs.mkdirSync(path.join(legacySkillRoot, 'scripts'), { recursive: true });
     fs.writeFileSync(
       path.join(legacySkillRoot, 'SKILL.md'),
-      'Run `node .agents/skills/impeccable/scripts/live-poll.mjs`.\n',
+      'Run `.agents/skills/impeccable/scripts/impeccable live-poll`.\n',
     );
     onTestFinished(() => fs.rmSync(project, { recursive: true, force: true }));
     const harness = loadExtension();
@@ -101,7 +101,7 @@ describe('impeccable extension', () => {
     expect(fs.existsSync(path.join(skillRoot, 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(legacySkillRoot)).toBe(true);
     expect(fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8')).toContain(
-      '.omp/skills/impeccable/scripts/live-poll.mjs',
+      '.omp/skills/impeccable/scripts/impeccable live-poll',
     );
     expect(harness.messages[0]?.message.content).toMatch(
       new RegExp(escapeRegExp(skillRoot)),
@@ -430,7 +430,7 @@ Existing /audit command
       ],
     };
     const { project } = makeProject({
-      'live-status.mjs': `console.log(${JSON.stringify(JSON.stringify(status))});\n`,
+      'live-status': `console.log(${JSON.stringify(JSON.stringify(status))});\n`,
     });
     const harness = loadExtension();
     const ctx = makeContext(project);
@@ -451,8 +451,8 @@ Existing /audit command
       prompt: 'Make the hero sharper',
     };
     const { project, skillRoot } = makeProject({
-      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
-      'live-poll.mjs': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
     });
     const harness = loadExtension();
     const ctx = makeContext(project, { idle: false });
@@ -503,8 +503,8 @@ Existing /audit command
       prompt: 'Make the hero sharper',
     };
     const { project } = makeProject({
-      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
-      'live-poll.mjs': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
     });
     const harness = loadExtension();
     const ctx = makeContext(project, { idle: false });
@@ -532,9 +532,9 @@ Existing /audit command
     );
     onTestFinished(() => fs.rmSync(stopArgs, { force: true }));
     const { project } = makeProject({
-      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
-      'live-poll.mjs': `setTimeout(() => console.log(JSON.stringify({ type: 'generate', id: 'late' })), 5000);\n`,
-      'live-server.mjs': `
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `setTimeout(() => console.log(JSON.stringify({ type: 'generate', id: 'late' })), 5000);\n`,
+      'live-server': `
         import fs from 'node:fs';
         if (process.argv.includes('stop')) fs.writeFileSync(${JSON.stringify(stopArgs)}, JSON.stringify(process.argv.slice(2)));
       `,
@@ -556,8 +556,8 @@ Existing /audit command
   test('live poll handler failures do not escape as uncaught exceptions', async () => {
     const event = { type: 'accepted', id: 'evt-1' };
     const { project } = makeProject({
-      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
-      'live-poll.mjs': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
     });
     const harness = loadExtension();
     const ctx = makeContext(project, {
@@ -592,7 +592,7 @@ Existing /audit command
       {
         toolName: 'bash',
         input: {
-          command: 'node .omp/skills/impeccable/scripts/live-poll.mjs',
+          command: '.omp/skills/impeccable/scripts/impeccable live-poll',
         },
       },
       ctx,
@@ -603,7 +603,7 @@ Existing /audit command
         toolName: 'bash',
         input: {
           command:
-            'node .omp/skills/impeccable/scripts/live-poll.mjs --reply evt done',
+            '.omp/skills/impeccable/scripts/impeccable live-poll --reply evt done',
         },
       },
       ctx,
@@ -616,7 +616,7 @@ Existing /audit command
     expect(reply).toBeUndefined();
   });
 
-  test('reply and complete tools call OMP skill scripts with the expected args', async () => {
+  test('reply and complete tools call the skill launcher with the expected verbs and args', async () => {
     const replyArgs = path.join(
       os.tmpdir(),
       `omp-impeccable-reply-${process.pid}.json`,
@@ -629,24 +629,18 @@ Existing /audit command
       fs.rmSync(replyArgs, { force: true });
       fs.rmSync(completeArgs, { force: true });
     });
-    const { project, skillRoot } = makeProject({
-      'live-poll.mjs': `
+    const { project } = makeProject({
+      'live-poll': `
 				import fs from 'node:fs';
 				if (process.argv.includes('--reply')) {
-					fs.writeFileSync(
-						${JSON.stringify(replyArgs)},
-						JSON.stringify({ script: process.argv[1], args: process.argv.slice(2) }),
-					);
+					fs.writeFileSync(${JSON.stringify(replyArgs)}, JSON.stringify(process.argv.slice(2)));
 				} else {
 					console.log(JSON.stringify({ type: 'exit' }));
 				}
 			`,
-      'live-complete.mjs': `
+      'live-complete': `
 				import fs from 'node:fs';
-				fs.writeFileSync(
-					${JSON.stringify(completeArgs)},
-					JSON.stringify({ script: process.argv[1], args: process.argv.slice(2) }),
-				);
+				fs.writeFileSync(${JSON.stringify(completeArgs)}, JSON.stringify(process.argv.slice(2)));
 			`,
     });
     const harness = loadExtension();
@@ -679,14 +673,7 @@ Existing /audit command
 
     expect(reply.content[0]?.text).toMatch(/resumed polling/);
     expect(complete.content[0]?.text).toMatch(/resumed polling/);
-    const replyInvocation = JSON.parse(fs.readFileSync(replyArgs, 'utf8'));
-    const completeInvocation = JSON.parse(
-      fs.readFileSync(completeArgs, 'utf8'),
-    );
-    expect(replyInvocation.script).toBe(
-      path.join(skillRoot, 'scripts', 'live-poll.mjs'),
-    );
-    expect(replyInvocation.args).toEqual([
+    expect(JSON.parse(fs.readFileSync(replyArgs, 'utf8'))).toEqual([
       '--reply',
       'evt-1',
       'done',
@@ -696,10 +683,7 @@ Existing /audit command
       '{"ok":true}',
       'Looks good',
     ]);
-    expect(completeInvocation.script).toBe(
-      path.join(skillRoot, 'scripts', 'live-complete.mjs'),
-    );
-    expect(completeInvocation.args).toEqual([
+    expect(JSON.parse(fs.readFileSync(completeArgs, 'utf8'))).toEqual([
       '--id',
       'session-1',
       '--discarded',
@@ -961,14 +945,21 @@ function makeContext(
   };
 }
 
-function makeProject(scripts: Record<string, string> = {}): ProjectFixture {
+// Fake skill: scripts/impeccable dispatches `<verb> ...args` to scripts/verbs/<verb>.mjs.
+function makeProject(verbs: Record<string, string> = {}): ProjectFixture {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-impeccable-'));
   const skillRoot = path.join(project, '.omp', 'skills', 'impeccable');
+  const scripts = path.join(skillRoot, 'scripts');
   fs.mkdirSync(path.join(project, '.git'));
-  fs.mkdirSync(path.join(skillRoot, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(scripts, 'verbs'), { recursive: true });
   fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# fake impeccable\n');
-  for (const [name, source] of Object.entries(scripts)) {
-    fs.writeFileSync(path.join(skillRoot, 'scripts', name), source);
+  fs.writeFileSync(
+    path.join(scripts, 'impeccable'),
+    `#!/bin/sh\nverb=$1\nshift\nexec "${process.execPath}" "$(dirname "$0")/verbs/$verb.mjs" "$@"\n`,
+    { mode: 0o755 },
+  );
+  for (const [verb, source] of Object.entries(verbs)) {
+    fs.writeFileSync(path.join(scripts, 'verbs', `${verb}.mjs`), source);
   }
   onTestFinished(() => fs.rmSync(project, { recursive: true, force: true }));
   return { project, skillRoot };
