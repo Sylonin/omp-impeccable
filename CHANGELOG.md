@@ -8,6 +8,7 @@
 - Catch failures in the live poll `close` and `error` handlers and show them as a live error, so a throw no longer ends the OMP session.
 - Clear the transient status line with OMP's managed `ctx.setTimeout` instead of a raw timer.
 - Add `aside` live delivery (`/impeccable live --delivery=aside`), which adds events at the next agent step without skipping running tool calls. `steer` stays the default.
+- Require `impeccable` ^4.1.0. The 3.x CLI follows only one redirect, so `/impeccable install` and `/impeccable update` failed with `Download failed: invalid zip data` once the skill bundle moved behind a second redirect.
 
 ## 0.1.0 - 2026-06-21
 

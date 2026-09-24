@@ -22,7 +22,6 @@ describe('impeccable extension', () => {
     const pkg = readPackageJson();
 
     expect(pkg.omp.extensions).toEqual(['./extensions/impeccable.ts']);
-    expect(pkg.dependencies.impeccable).toBe('*');
     for (const excluded of [
       '.omp/skills',
       '.agents/skills',
