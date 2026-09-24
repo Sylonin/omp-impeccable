@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Type-check against `@oh-my-pi/pi-coding-agent` 18.3.
+
 ## 0.1.0 - 2026-06-21
 
 Initial OMP-native release, adapted from `pi-impeccable`.

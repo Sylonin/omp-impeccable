@@ -139,27 +139,43 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     checkConflicts: false,
   });
 
+  // omp 18.3 Static<> ignores pi.zod schemas, so execute params are typed from _output.
+  const liveReplyParams = z.object({
+    id: z.string().describe('Live event id.'),
+    status: z
+      .enum(['done', 'partial', 'steer_done', 'error'])
+      .describe('Live reply status.'),
+    file: z
+      .string()
+      .describe('Changed file path, relative to project root.')
+      .optional(),
+    message: z
+      .string()
+      .describe('Short browser/user-facing note or error reason.')
+      .optional(),
+    data: z.any().describe('Manual Apply JSON payload.').optional(),
+  });
+  const liveCompleteParams = z.object({
+    id: z.string().describe('Live event/session id.'),
+    discarded: z
+      .boolean()
+      .describe('Set only for discard completion recovery.')
+      .optional(),
+  });
+
   pi.registerTool({
     name: 'impeccable_live_reply',
     label: 'Impeccable Live Reply',
     description:
       'Reply to an Impeccable live event after handling generate, steer, or manual Apply work.',
-    parameters: z.object({
-      id: z.string().describe('Live event id.'),
-      status: z
-        .enum(['done', 'partial', 'steer_done', 'error'])
-        .describe('Live reply status.'),
-      file: z
-        .string()
-        .describe('Changed file path, relative to project root.')
-        .optional(),
-      message: z
-        .string()
-        .describe('Short browser/user-facing note or error reason.')
-        .optional(),
-      data: z.any().describe('Manual Apply JSON payload.').optional(),
-    }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    parameters: liveReplyParams,
+    async execute(
+      _toolCallId,
+      params: typeof liveReplyParams._output,
+      signal,
+      _onUpdate,
+      ctx,
+    ) {
       const skillRoot = live.skillRoot ?? locateSkill(ctx.cwd);
       if (!skillRoot)
         throw new Error(
@@ -203,14 +219,14 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     label: 'Impeccable Live Complete',
     description:
       'Mark Impeccable live accept/carbonize cleanup complete and resume background polling.',
-    parameters: z.object({
-      id: z.string().describe('Live event/session id.'),
-      discarded: z
-        .boolean()
-        .describe('Set only for discard completion recovery.')
-        .optional(),
-    }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    parameters: liveCompleteParams,
+    async execute(
+      _toolCallId,
+      params: typeof liveCompleteParams._output,
+      signal,
+      _onUpdate,
+      ctx,
+    ) {
       const skillRoot = live.skillRoot ?? locateSkill(ctx.cwd);
       if (!skillRoot)
         throw new Error(

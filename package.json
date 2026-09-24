@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
-    "@oh-my-pi/pi-coding-agent": "*",
+    "@oh-my-pi/pi-coding-agent": "^18.3.0",
     "@types/node": "24.13.2",
     "typescript": "6.0.3",
     "vitest": "^4.1.9"

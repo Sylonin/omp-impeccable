@@ -708,7 +708,7 @@ type ResourcesDiscoverResult = {
 };
 
 type SentMessage = {
-  message: Parameters<ExtensionAPI['sendMessage']>[0];
+  message: Exclude<Parameters<ExtensionAPI['sendMessage']>[0], string>;
   options: Parameters<ExtensionAPI['sendMessage']>[1];
 };
 
