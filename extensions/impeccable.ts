@@ -446,31 +446,41 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
   let stderr = '';
   child.stdout.on('data', (chunk) => (stdout += String(chunk)));
   child.stderr.on('data', (chunk) => (stderr += String(chunk)));
-  child.on('close', (code) => {
+  child.on('error', (error) => {
     if (live.poll !== child) return;
     live.poll = undefined;
-    if (!live.active) return;
-    if (code !== 0) {
-      live.pausedFor = 'poll-error';
-      renderIndicator(live, ctx);
-      display(pi, `Impeccable live poll failed:\n\n${stderr || stdout}`);
-      ctx.ui.notify(
-        'Impeccable live poll failed; run /impeccable live to resume.',
-        'warning',
-      );
-      return;
+    if (live.active) reportPollFailure(live, ctx, error);
+  });
+  child.on('close', (code) => {
+    // A throw here is an uncaughtException that ends the omp session.
+    try {
+      if (live.poll !== child) return;
+      live.poll = undefined;
+      if (!live.active) return;
+      if (code !== 0) {
+        live.pausedFor = 'poll-error';
+        renderIndicator(live, ctx);
+        display(pi, `Impeccable live poll failed:\n\n${stderr || stdout}`);
+        ctx.ui.notify(
+          'Impeccable live poll failed; run /impeccable live to resume.',
+          'warning',
+        );
+        return;
+      }
+      const event = asLiveEvent(parseJson(stdout));
+      if (!event) {
+        live.pausedFor = 'parse-error';
+        renderIndicator(live, ctx);
+        display(
+          pi,
+          `Could not parse Impeccable live event:\n\n${stdout}\n${stderr}`,
+        );
+        return;
+      }
+      handleLiveEvent(pi, live, ctx, event, stderr);
+    } catch (error) {
+      reportPollFailure(live, ctx, error);
     }
-    const event = asLiveEvent(parseJson(stdout));
-    if (!event) {
-      live.pausedFor = 'parse-error';
-      renderIndicator(live, ctx);
-      display(
-        pi,
-        `Could not parse Impeccable live event:\n\n${stdout}\n${stderr}`,
-      );
-      return;
-    }
-    handleLiveEvent(pi, live, ctx, event, stderr);
   });
 }
 
@@ -945,7 +955,7 @@ function cleanDescription(description: string) {
     .trim();
 }
 
-let transientStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let cancelTransientStatusTimer: (() => void) | undefined;
 
 function sendExtensionPrompt(
   pi: ExtensionAPI,
@@ -1015,8 +1025,8 @@ function display(pi: ExtensionAPI, content: string) {
 }
 
 function clearTransientStatus(ctx?: ExtensionContext) {
-  if (transientStatusTimer) clearTimeout(transientStatusTimer);
-  transientStatusTimer = undefined;
+  cancelTransientStatusTimer?.();
+  cancelTransientStatusTimer = undefined;
   ctx?.ui.setStatus('impeccable-transient', undefined);
 }
 
@@ -1024,17 +1034,35 @@ function showTransientStatus(ctx: ExtensionContext, text: string) {
   if (!ctx.hasUI) return;
   clearTransientStatus(ctx);
   ctx.ui.setStatus('impeccable-transient', `✦ impeccable ${text}`);
-  transientStatusTimer = setTimeout(() => {
-    transientStatusTimer = undefined;
+  const timer = ctx.setTimeout(() => {
+    cancelTransientStatusTimer = undefined;
     ctx.ui.setStatus('impeccable-transient', undefined);
   }, 3500);
-  transientStatusTimer.unref?.();
+  cancelTransientStatusTimer = () => ctx.clearTimer(timer);
 }
 
 function killPoll(live: LiveState) {
   if (!live.poll) return;
   live.poll.kill('SIGTERM');
   live.poll = undefined;
+}
+
+function reportPollFailure(
+  live: LiveState,
+  ctx: ExtensionContext,
+  error: unknown,
+) {
+  live.pausedFor = 'poll-error';
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    renderIndicator(live, ctx);
+    ctx.ui.notify(
+      `Impeccable live error: ${message}; run /impeccable live to resume.`,
+      'error',
+    );
+  } catch {
+    // ctx can be stale after a session switch; nothing is left to report to.
+  }
 }
 
 function startIndicator(live: LiveState, ctx: ExtensionContext) {

@@ -524,6 +524,36 @@ Existing /audit command
     ).toBe(false);
   });
 
+  test('live poll handler failures do not escape as uncaught exceptions', async () => {
+    const event = { type: 'accepted', id: 'evt-1' };
+    const { project } = makeProject({
+      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll.mjs': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project, {
+      throwOnNotify: (message) => message === 'Impeccable live: accepted',
+    });
+
+    await runCommand(harness, 'live', ctx);
+    await waitFor(
+      () =>
+        ctx.ui.statuses.some(
+          (status) =>
+            status.key === 'impeccable' &&
+            status.value === '✦ impeccable error',
+        ),
+      'expected the live indicator to show the handler failure',
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+
+    expect(ctx.ui.notifications.at(-1)).toEqual({
+      message:
+        'Impeccable live error: stale ctx; run /impeccable live to resume.',
+      type: 'error',
+    });
+  });
+
   test('foreground live-poll bash calls are blocked', async () => {
     const harness = loadExtension();
     const ctx = makeContext(root);
@@ -728,6 +758,8 @@ type TestContext = {
   ui: TestUI;
   isIdle: () => boolean;
   signal: AbortSignal | undefined;
+  setTimeout: (fn: () => void, ms?: number) => NodeJS.Timeout;
+  clearTimer: (timer: NodeJS.Timeout) => void;
 };
 
 type TestUI = {
@@ -865,7 +897,15 @@ function loadExtension(
 
 function makeContext(
   cwd: string,
-  { idle = true, hasUI = true }: { idle?: boolean; hasUI?: boolean } = {},
+  {
+    idle = true,
+    hasUI = true,
+    throwOnNotify,
+  }: {
+    idle?: boolean;
+    hasUI?: boolean;
+    throwOnNotify?: (message: string) => boolean;
+  } = {},
 ): TestContext {
   const notifications: TestUI['notifications'] = [];
   const statuses: TestUI['statuses'] = [];
@@ -875,12 +915,21 @@ function makeContext(
     theme: { fg: (_color, text) => text },
     notify(message, type) {
       notifications.push({ message, type });
+      if (throwOnNotify?.(message)) throw new Error('stale ctx');
     },
     setStatus(key, value) {
       statuses.push({ key, value });
     },
   };
-  return { cwd, hasUI, ui, isIdle: () => idle, signal: undefined };
+  return {
+    cwd,
+    hasUI,
+    ui,
+    isIdle: () => idle,
+    signal: undefined,
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (timer) => clearTimeout(timer),
+  };
 }
 
 function makeProject(scripts: Record<string, string> = {}): ProjectFixture {

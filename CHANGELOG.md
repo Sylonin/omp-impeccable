@@ -4,6 +4,8 @@
 
 - Type-check against `@oh-my-pi/pi-coding-agent` 18.3.
 - Run Impeccable skill scripts under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
+- Catch failures in the live poll `close` and `error` handlers and show them as a live error, so a throw no longer ends the OMP session.
+- Clear the transient status line with OMP's managed `ctx.setTimeout` instead of a raw timer.
 
 ## 0.1.0 - 2026-06-21
 
