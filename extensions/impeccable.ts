@@ -464,7 +464,7 @@ async function installOrUpdate(
         ? installed.result.stderr ||
           installed.result.stdout ||
           `impeccable ${action} failed`
-        : `.omp/skills/impeccable was not found after staging the upstream Codex install`;
+        : `.omp/skills/impeccable was not found after staging the upstream install`;
     return notifyOrDisplay(pi, ctx, message, 'error');
   }
   notifyOrDisplay(pi, ctx, `Impeccable ${action} complete.`, 'info');
@@ -475,7 +475,7 @@ async function ensureSkill(pi: ExtensionAPI, ctx: ExtensionContext) {
   if (projectSkill) return projectSkill;
   display(
     pi,
-    'Impeccable is not installed for this project. Installing latest upstream Codex skill into .omp/skills/impeccable...',
+    'Impeccable is not installed for this project. Installing the latest upstream skill into .omp/skills/impeccable...',
   );
   const installed = await installProjectOmpSkill(ctx.cwd);
   if (installed.result.code !== 0) {
@@ -488,7 +488,7 @@ async function ensureSkill(pi: ExtensionAPI, ctx: ExtensionContext) {
   if (!installed.skillRoot) {
     display(
       pi,
-      `Impeccable install ran, but .omp/skills/impeccable was not found after staging the upstream Codex install. Output:\n\n${installed.result.stdout}`,
+      `Impeccable install ran, but .omp/skills/impeccable was not found after staging the upstream install. Output:\n\n${installed.result.stdout}`,
     );
     return null;
   }
