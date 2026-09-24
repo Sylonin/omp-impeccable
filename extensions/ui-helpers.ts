@@ -137,7 +137,7 @@ export function helpText() {
 /impeccable <command> [target]
 /impeccable install
 /impeccable update
-/impeccable live [--delivery=steer|followUp]
+/impeccable live [--delivery=steer|followUp|aside]
 /impeccable live status
 /impeccable live stop
 /impeccable pin <upstream-command>

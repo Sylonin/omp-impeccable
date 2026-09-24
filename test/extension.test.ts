@@ -496,6 +496,35 @@ Existing /audit command
     });
   });
 
+  test('live delivery can be set to aside', async () => {
+    const event: LiveEvent = {
+      type: 'generate',
+      id: 'evt-1',
+      prompt: 'Make the hero sharper',
+    };
+    const { project } = makeProject({
+      'live.mjs': 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll.mjs': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project, { idle: false });
+
+    await runCommand(harness, 'live --delivery=aside', ctx);
+    await waitFor(
+      () =>
+        harness.messages.some(
+          (entry) => entry.message.customType === 'impeccable-live',
+        ),
+      'expected a hidden live event message',
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+
+    const liveMessage = harness.messages.find(
+      (entry) => entry.message.customType === 'impeccable-live',
+    );
+    expect(liveMessage?.options?.deliverAs).toBe('aside');
+  });
+
   test('session shutdown stops live server and ignores killed polls', async () => {
     const stopArgs = path.join(
       os.tmpdir(),

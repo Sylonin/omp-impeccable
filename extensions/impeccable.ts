@@ -838,7 +838,9 @@ function readDelivery(tokens: string[]): Delivery | undefined {
   const value = option(tokens, 'delivery');
   if (value === 'followUp' || value === 'followup') return 'followUp';
   if (value === 'steer') return 'steer';
+  if (value === 'aside') return 'aside';
   if (tokens.includes('--follow-up')) return 'followUp';
+  if (tokens.includes('--aside')) return 'aside';
   return undefined;
 }
 
@@ -1340,7 +1342,7 @@ function asLiveEvent(value: unknown): LiveEventData | undefined {
 // Types and static data.
 const require = createRequire(import.meta.url);
 
-type Delivery = 'steer' | 'followUp';
+type Delivery = 'steer' | 'followUp' | 'aside';
 
 type LiveState = {
   active: boolean;

@@ -67,6 +67,14 @@ Start the non-blocking live loop:
 
 While live mode is running, OMP remains usable. Impeccable events are delivered in the background, and the agent can reply through `impeccable_live_reply` / `impeccable_live_complete` without exposing the polling loop as a foreground task.
 
+By default, a live event that arrives while the agent is busy steers the current turn. Choose another delivery mode with `--delivery`:
+
+```text
+/impeccable live --delivery=steer      # default: deliver after the running tool, skip the remaining tool calls
+/impeccable live --delivery=followUp   # deliver after the agent finishes its current work
+/impeccable live --delivery=aside      # deliver at the next step, without skipping the running tool calls
+```
+
 Check or stop live mode:
 
 ```text
