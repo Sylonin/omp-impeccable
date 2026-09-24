@@ -439,7 +439,7 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
   const child = spawn(
     process.execPath,
     [script(live.skillRoot, 'live-poll.mjs')],
-    { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: runtimeEnv() },
   );
   live.poll = child;
   let stdout = '';
@@ -1232,6 +1232,13 @@ function runNode(
   );
 }
 
+// Compiled omp binaries are process.execPath; BUN_BE_BUN makes them run scripts as Bun.
+function runtimeEnv(): NodeJS.ProcessEnv {
+  return process.versions.bun
+    ? { ...process.env, BUN_BE_BUN: '1' }
+    : process.env;
+}
+
 function runProcess(
   command: string,
   args: string[],
@@ -1244,6 +1251,7 @@ function runProcess(
       const child = spawn(command, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: command === process.execPath ? runtimeEnv() : process.env,
       });
       let stdout = '';
       let stderr = '';

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Type-check against `@oh-my-pi/pi-coding-agent` 18.3.
+- Run Impeccable skill scripts under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
 
 ## 0.1.0 - 2026-06-21
 
