@@ -1,5 +1,6 @@
 export const agentCommands = [
   'init',
+  'teach',
   'document',
   'craft',
   'shape',
@@ -21,6 +22,8 @@ export const agentCommands = [
   'adapt',
   'optimize',
   'extract',
+  'generate',
+  'doctor',
 ] as const;
 
 export const extensionCommandDescriptions = new Map<string, string>([
@@ -33,7 +36,7 @@ export const extensionCommandDescriptions = new Map<string, string>([
   ['unpin', 'Remove an OMP slash-command shortcut for an Impeccable command'],
   [
     'hooks',
-    'Explain OMP-native live mode; upstream hook manifests are not installed',
+    'Manage the Impeccable design detector hook for this project (on, off, status, ignore-*, reset)',
   ],
 ]);
 
@@ -45,6 +48,15 @@ export const fallbackAgentCommandDescriptions = new Map<string, string>([
   [
     'init',
     'Sets up a project for Impeccable. Runs a discovery interview when context is missing, writes PRODUCT.md, offers DESIGN.md when code exists, pre-configures live mode, and recommends next commands.',
+  ],
+  ['teach', 'Alias for init: capture durable product context in PRODUCT.md.'],
+  [
+    'generate',
+    'Generate variants of a named element and cycle through them in the live browser, without manual picking.',
+  ],
+  [
+    'doctor',
+    "Report and repair drift between this project's Impeccable artifacts and what the installed version reads.",
   ],
   [
     'document',
@@ -128,12 +140,9 @@ export const fallbackAgentCommandDescriptions = new Map<string, string>([
   ],
 ]);
 
-export function unknownCommandText(command: string) {
-  return `Unknown Impeccable command: ${command}. Try /impeccable live.`;
-}
-
 export function helpText() {
   return `Usage:
+/impeccable [request]
 /impeccable <command> [target]
 /impeccable install
 /impeccable update
@@ -142,13 +151,16 @@ export function helpText() {
 /impeccable live stop
 /impeccable pin <upstream-command>
 /impeccable unpin <upstream-command>
-/impeccable hooks
+/impeccable hooks [on|off|status|ignore-rule|ignore-file|ignore-value|reset]
+/impeccable help
+
+With no argument, Impeccable suggests next steps for this project. Any request that is not an OMP command below goes to the Impeccable skill as written.
 
 OMP commands:
-live, status, stop, install, update, pin, unpin, hooks
+live, status, stop, install, update, pin, unpin, hooks, help
 
 Upstream Impeccable commands:
-init, document, shape, craft, critique, audit, polish, bolder, quieter, distill, harden, clarify, onboard, animate, colorize, typeset, layout, delight, overdrive, adapt, optimize, extract
+init, teach, document, shape, craft, critique, audit, polish, bolder, quieter, distill, harden, clarify, onboard, animate, colorize, typeset, layout, delight, overdrive, adapt, optimize, extract, generate, doctor
 
-This extension does not vendor Impeccable. It stages the upstream Codex skill, stores the managed copy at .omp/skills/impeccable in your project, then wraps live mode so the poller runs in the background.`;
+This extension does not vendor Impeccable. It stages the upstream skill, stores the managed copy at .omp/skills/impeccable and its subagents at .omp/agents in your project, then wraps live mode so the poller runs in the background.`;
 }

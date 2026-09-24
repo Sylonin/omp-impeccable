@@ -22,7 +22,6 @@ import {
   extensionCommandDescriptions,
   fallbackAgentCommandDescriptions,
   helpText,
-  unknownCommandText,
 } from './ui-helpers.ts';
 
 export default function impeccableExtension(pi: ExtensionAPI) {
@@ -30,6 +29,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | undefined;
   const live: LiveState = { active: false, delivery: 'steer' };
   const pinnedCommandNames = new Set<string>();
+  let designHookContinuing = false;
 
   pi.on('resources_discover', (event) => {
     const skillRoot = locateSkill(event.cwd);
@@ -99,6 +99,52 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     };
   });
 
+  // Upstream's design hook, driven from OMP tool and agent events instead of a harness manifest.
+  pi.on('tool_result', async (event, ctx) => {
+    if (event.isError) return;
+    if (event.toolName !== 'edit' && event.toolName !== 'write') return;
+    const skillRoot = designHookActive(ctx.cwd);
+    if (!skillRoot) return;
+    const notes: string[] = [];
+    for (const file of changedFiles(ctx.cwd, event.input, event.details)) {
+      const note = await runDesignHook(skillRoot, ctx, {
+        hook_event_name: 'PostToolUse',
+        tool_name: event.toolName === 'edit' ? 'Edit' : 'Write',
+        tool_input: { file_path: file },
+      });
+      if (note) notes.push(note);
+    }
+    if (notes.length === 0) return;
+    return {
+      content: [...event.content, { type: 'text', text: notes.join('\n\n') }],
+    };
+  });
+
+  pi.on('agent_end', async (event, ctx) => {
+    if (event.willContinue) return;
+    const skillRoot = designHookActive(ctx.cwd);
+    if (!skillRoot) return;
+    // Mirrors Claude's stop_hook_active: the turn a Stop pass started cannot start another.
+    const stopHookActive = designHookContinuing;
+    designHookContinuing = false;
+    const note = await runDesignHook(skillRoot, ctx, {
+      hook_event_name: 'Stop',
+      stop_hook_active: stopHookActive,
+    });
+    if (!note) return;
+    designHookContinuing = true;
+    pi.sendMessage(
+      {
+        customType: 'impeccable-hook',
+        content: note,
+        display: true,
+        details: undefined,
+        attribution: undefined,
+      },
+      { triggerTurn: true, deliverAs: 'followUp' },
+    );
+  });
+
   pi.registerCommand('impeccable', {
     description:
       'Run Impeccable design commands; live mode runs in the background',
@@ -108,7 +154,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       const tokens = tokenize(args);
       const head = tokens[0] ?? '';
 
-      if (!head || head === 'help' || args.trim() === '--help')
+      if (head === 'help' || args.trim() === '--help')
         return display(pi, helpText());
       if (head === 'install') return installOrUpdate(pi, live, ctx, 'install');
       if (head === 'update') return installOrUpdate(pi, live, ctx, 'update');
@@ -125,14 +171,21 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       if (head === 'pin')
         return pinCommand(pi, pinnedCommandNames, ctx, tokens.slice(1));
       if (head === 'unpin') return unpinCommand(pi, ctx, tokens.slice(1));
-      if (head === 'hooks') return explainHooksCommand(pi, ctx);
+      if (head === 'hooks') return runHooksCommand(pi, ctx, tokens.slice(1));
 
-      if (!isAgentCommand(head))
-        return notifyOrDisplay(pi, ctx, unknownCommandText(head), 'warning');
-      showTransientStatus(ctx, `${head} queued`);
+      // Upstream routes anything else (a command, a free-form request, or nothing) through SKILL.md.
+      showTransientStatus(
+        ctx,
+        isAgentCommand(head) ? `${head} queued` : 'request queued',
+      );
       const skillRoot = await ensureSkill(pi, ctx);
       if (!skillRoot) return;
-      sendExtensionPrompt(pi, ctx, commandPrompt(args, skillRoot), 'followUp');
+      sendExtensionPrompt(
+        pi,
+        ctx,
+        commandPrompt(args, skillRoot, ctx.cwd),
+        'followUp',
+      );
     },
   });
 
@@ -304,7 +357,12 @@ async function startLive(
       `Impeccable live needs setup:\n\n${JSON.stringify(parsed ?? boot.stdout, null, 2)}`,
     );
     showTransientStatus(ctx, 'live setup queued');
-    sendExtensionPrompt(pi, ctx, commandPrompt('live', skillRoot), 'followUp');
+    sendExtensionPrompt(
+      pi,
+      ctx,
+      commandPrompt('live', skillRoot, ctx.cwd),
+      'followUp',
+    );
     return;
   }
 
@@ -637,13 +695,99 @@ function unpinCommand(
   );
 }
 
-function explainHooksCommand(pi: ExtensionAPI, ctx: ExtensionContext) {
-  return notifyOrDisplay(
-    pi,
-    ctx,
-    'The upstream /impeccable hooks command installs provider-specific hook manifests. omp-impeccable does not install those; use /impeccable live for OMP-native design feedback.',
-    'info',
+async function runHooksCommand(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  args: string[],
+) {
+  const skillRoot = await ensureSkill(pi, ctx);
+  if (!skillRoot) return;
+  const result = await runLauncher(skillRoot, 'hooks', args, ctx.cwd);
+  const output = (result.stdout || result.stderr).trim();
+  if (result.code !== 0)
+    return notifyOrDisplay(
+      pi,
+      ctx,
+      output || 'impeccable hooks failed',
+      'error',
+    );
+  const note = designHookActive(ctx.cwd)
+    ? '\n\nomp-impeccable runs this hook after edit and write tool calls and again when the agent finishes.'
+    : '';
+  display(pi, `${output}${note}`);
+}
+
+// Active once `hooks on` records local consent and the project has not turned the hook off.
+function designHookActive(cwd: string) {
+  const skillRoot = projectOmpSkillRoot(cwd);
+  if (!isSkillRoot(skillRoot)) return undefined;
+  const dir = join(projectRoot(cwd), '.impeccable');
+  const read = (name: string) =>
+    existsSync(join(dir, name))
+      ? parseJson(readFileSync(join(dir, name), 'utf8'))
+      : null;
+  const local = read('config.local.json') as {
+    hook?: { consent?: unknown };
+  } | null;
+  const shared = read('config.json') as {
+    hook?: { enabled?: unknown };
+  } | null;
+  if (local?.hook?.consent !== 'accepted') return undefined;
+  if (shared?.hook?.enabled === false) return undefined;
+  return skillRoot;
+}
+
+function changedFiles(
+  cwd: string,
+  input: Record<string, unknown>,
+  details: unknown,
+) {
+  const files = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value) files.add(resolve(cwd, value));
+  };
+  add(input.path);
+  if (details && typeof details === 'object') {
+    const { path, perFileResults } = details as {
+      path?: unknown;
+      perFileResults?: unknown;
+    };
+    add(path);
+    if (Array.isArray(perFileResults))
+      for (const entry of perFileResults) add(entry?.path);
+  }
+  return [...files];
+}
+
+async function runDesignHook(
+  skillRoot: string,
+  ctx: ExtensionContext,
+  event: Record<string, unknown>,
+) {
+  const result = await runLauncher(
+    skillRoot,
+    'hook',
+    [],
+    ctx.cwd,
+    undefined,
+    30_000,
+    JSON.stringify({
+      ...event,
+      session_id: ctx.sessionManager.getSessionId(),
+      cwd: ctx.cwd,
+    }),
   );
+  if (result.code !== 0) return undefined;
+  const output = parseJson(result.stdout) as {
+    hookSpecificOutput?: { additionalContext?: unknown };
+    additionalContext?: unknown;
+    reason?: unknown;
+  } | null;
+  const text =
+    output?.hookSpecificOutput?.additionalContext ??
+    output?.additionalContext ??
+    output?.reason;
+  return typeof text === 'string' && text.trim() ? text : undefined;
 }
 
 function registerPinnedCommands(
@@ -687,7 +831,7 @@ function registerPinnedCommand(
       sendExtensionPrompt(
         pi,
         ctx,
-        commandPrompt(invocation, skillRoot),
+        commandPrompt(invocation, skillRoot, ctx.cwd),
         'followUp',
       );
     },
@@ -814,12 +958,17 @@ The omp-impeccable extension handles /${command} directly when loaded. This file
 `;
 }
 
-function commandPrompt(args: string, skillRoot: string) {
+function commandPrompt(args: string, skillRoot: string, cwd: string) {
   return [
-    `Handle this Impeccable invocation in OMP: /impeccable ${args.trim()}`,
+    `Handle this Impeccable invocation in OMP: /impeccable ${args.trim()}`.trimEnd(),
     pathContract(skillRoot),
     `Start by reading ${join(skillRoot, 'SKILL.md')}.`,
     'If a sub-command is invoked, read the matching reference file from that skill root before acting.',
+    ...(designHookActive(cwd)
+      ? [
+          'The omp-impeccable extension runs the Impeccable design hook after edit and write tool calls and when you finish, so the design hook is active: skip any MANUAL_DETECTOR_REQUIRED detector run.',
+        ]
+      : []),
   ].join('\n\n');
 }
 
@@ -1120,7 +1269,7 @@ async function installProjectOmpSkill(cwd: string) {
     const result = await runImpeccable(
       [
         'install',
-        '--providers=codex',
+        '--providers=pi,claude-code',
         '--scope=project',
         '-y',
         '--no-hooks',
@@ -1130,13 +1279,14 @@ async function installProjectOmpSkill(cwd: string) {
       undefined,
       120_000,
     );
-    const skillRoot =
-      result.code === 0
-        ? replaceProjectOmpSkill(
-            join(stagingRoot, '.agents', 'skills', 'impeccable'),
-            cwd,
-          )
-        : undefined;
+    if (result.code !== 0) return { result, skillRoot: undefined };
+    // The pi build uses OMP's `/` command syntax; the Claude build carries the shipped subagents.
+    const skillRoot = replaceProjectOmpSkill(
+      join(stagingRoot, '.pi', 'skills', 'impeccable'),
+      cwd,
+    );
+    if (skillRoot)
+      replaceProjectOmpAgents(join(stagingRoot, '.claude', 'agents'), cwd);
     return { result, skillRoot };
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
@@ -1165,12 +1315,49 @@ function rewriteSkillRootReferences(dir: string) {
     if (!entry.isFile() || !isTextSkillFile(entry.name)) continue;
 
     const content = readFileSync(path, 'utf8');
-    const next = content.replaceAll(
-      '.agents/skills/impeccable',
-      '.omp/skills/impeccable',
-    );
+    const next = rewriteSkillPaths(content);
     if (next !== content) writeFileSync(path, next);
   }
+}
+
+function rewriteSkillPaths(text: string) {
+  return text.replace(
+    /\.(?:agents|pi|claude)\/skills\/impeccable/g,
+    '.omp/skills/impeccable',
+  );
+}
+
+function replaceProjectOmpAgents(source: string, cwd: string) {
+  const dest = join(projectRoot(cwd), '.omp', 'agents');
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(dest)) {
+    const path = join(dest, entry);
+    if (
+      entry.endsWith('.md') &&
+      /^managed-by: omp-impeccable$/m.test(readFileSync(path, 'utf8'))
+    )
+      rmSync(path);
+  }
+  if (!existsSync(source)) return;
+  for (const entry of readdirSync(source)) {
+    if (!entry.endsWith('.md')) continue;
+    const agent = readFileSync(join(source, entry), 'utf8');
+    writeFileSync(join(dest, entry), ompAgent(agent));
+  }
+}
+
+// OMP reads Claude agent frontmatter except `model: inherit` (omitting model inherits) and `effort`.
+function ompAgent(claudeAgent: string) {
+  return rewriteSkillPaths(claudeAgent).replace(
+    /^---\n([\s\S]*?)\n---\n/,
+    (_match, frontmatter: string) => {
+      const lines = frontmatter
+        .split('\n')
+        .filter((line) => !/^model:\s*inherit\s*$/.test(line))
+        .map((line) => line.replace(/^effort:/, 'thinkingLevel:'));
+      return `---\n${[...lines, 'managed-by: omp-impeccable'].join('\n')}\n---\n`;
+    },
+  );
 }
 
 const textSkillExtensions = new Set([
@@ -1252,6 +1439,7 @@ function runLauncher(
   cwd: string,
   signal?: AbortSignal,
   timeoutMs = 30_000,
+  input?: string,
 ) {
   return runProcess(
     join(skillRoot, 'scripts', 'impeccable'),
@@ -1259,6 +1447,7 @@ function runLauncher(
     cwd,
     signal,
     timeoutMs,
+    input,
   );
 }
 
@@ -1268,12 +1457,13 @@ function runProcess(
   cwd: string,
   signal?: AbortSignal,
   timeoutMs = 30_000,
+  input?: string,
 ) {
   return new Promise<{ stdout: string; stderr: string; code: number | null }>(
     (resolvePromise) => {
       const child = spawn(command, args, {
         cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         // Compiled omp binaries are process.execPath; BUN_BE_BUN makes them run scripts as Bun.
         env:
           command === process.execPath && process.versions.bun
@@ -1287,6 +1477,9 @@ function runProcess(
       signal?.addEventListener('abort', abort, { once: true });
       child.stdout.on('data', (chunk) => (stdout += String(chunk)));
       child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+      // A child that exits before reading stdin raises EPIPE here; its exit code is what matters.
+      child.stdin.on('error', () => {});
+      child.stdin.end(input ?? '');
       child.on('error', (error) => {
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);

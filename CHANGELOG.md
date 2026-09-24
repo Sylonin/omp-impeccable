@@ -9,6 +9,10 @@
 - Clear the transient status line with OMP's managed `ctx.setTimeout` instead of a raw timer.
 - Add `aside` live delivery (`/impeccable live --delivery=aside`), which adds events at the next agent step without skipping running tool calls. `steer` stays the default.
 - Require `impeccable` ^4.1.0. The 3.x CLI follows only one redirect, so `/impeccable install` and `/impeccable update` failed with `Download failed: invalid zip data` once the skill bundle moved behind a second redirect.
+- Send free-form `/impeccable <request>` text and a bare `/impeccable` to the skill, as upstream routing expects, instead of warning `Unknown Impeccable command`. Add `generate`, `doctor`, and the `teach` alias to completions.
+- Install the upstream pi build, which uses `/impeccable` command syntax, instead of the Codex build, which uses `$impeccable`.
+- Install the shipped Impeccable subagents (finish reviewer, documenter, asset producer, manual edit applier) into `.omp/agents`, converted from their Claude Code definitions.
+- Run `/impeccable hooks <action>` through the skill launcher, and run the design detector hook after `edit` and `write` tool calls and at the end of each agent run once `/impeccable hooks on` has recorded consent.
 
 ## 0.1.0 - 2026-06-21
 

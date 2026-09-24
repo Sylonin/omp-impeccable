@@ -32,23 +32,6 @@ describe('impeccable extension', () => {
     }
   });
 
-  test('help renders OMP-native command usage', async () => {
-    const harness = loadExtension();
-    const ctx = makeContext(root);
-
-    await runCommand(harness, 'help', ctx);
-
-    const help = harness.messages.find(
-      (entry) => entry.message.customType === 'impeccable',
-    );
-    expect(help?.message.content ?? '').toMatch(
-      /Usage:\n\/impeccable <command>/,
-    );
-    expect(help?.message.content ?? '').toContain('/impeccable hooks');
-    expect(help?.message.content ?? '').toContain('OMP commands:');
-    expect(help?.message.content ?? '').toContain('does not vendor Impeccable');
-  });
-
   test('resources_discover publishes the installed project OMP skill path', async () => {
     const { project, skillRoot } = makeProject();
     const legacySkillRoot = path.join(
@@ -168,12 +151,8 @@ describe('impeccable extension', () => {
     const craft = (await argumentCompletions(harness, 'cr')).find(
       ({ value }) => value === 'craft',
     );
-    const hooks = (await argumentCompletions(harness, 'ho')).find(
-      ({ value }) => value === 'hooks',
-    );
 
     expect(craft?.description).toMatch(/confirmed-brief-then-build/);
-    expect(hooks?.description).toMatch(/upstream hook manifests/);
   });
 
   test('pin creates an OMP command shortcut handled by the extension', async () => {
@@ -381,18 +360,111 @@ Existing /audit command
     expect(harness.messages).toHaveLength(0);
   });
 
-  test('hooks explains OMP-native live mode instead of installing upstream hook manifests', async () => {
-    const { project } = makeProject();
+  test('hooks passes its arguments to the skill launcher and shows the output', async () => {
+    const { project } = makeProject({
+      hooks: 'console.log(`hooks:${process.argv.slice(2).join(",")}`);\n',
+    });
     const harness = loadExtension();
     const ctx = makeContext(project);
 
-    await runCommand(harness, 'hooks', ctx);
+    await runCommand(harness, 'hooks ignore-rule overused-font', ctx);
 
-    expect(ctx.ui.notifications.at(-1)).toEqual({
-      message:
-        'The upstream /impeccable hooks command installs provider-specific hook manifests. omp-impeccable does not install those; use /impeccable live for OMP-native design feedback.',
-      type: 'info',
+    expect(harness.messages.at(-1)?.message.content).toBe(
+      'hooks:ignore-rule,overused-font',
+    );
+  });
+
+  test('free-form requests and a bare /impeccable go to the skill instead of warning', async () => {
+    const { project, skillRoot } = makeProject();
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+
+    await runCommand(
+      harness,
+      'check whether image generation is available for this project',
+      ctx,
+    );
+    await runCommand(harness, '', ctx);
+
+    expect(ctx.ui.notifications).toEqual([]);
+    expect(harness.messages.map((entry) => entry.message.content)).toEqual([
+      expect.stringContaining(
+        'Handle this Impeccable invocation in OMP: /impeccable check whether image generation is available for this project\n',
+      ),
+      expect.stringContaining(
+        'Handle this Impeccable invocation in OMP: /impeccable\n',
+      ),
+    ]);
+    expect(harness.messages[1]?.message.content).toContain(
+      path.join(skillRoot, 'SKILL.md'),
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+  });
+
+  test('design hook runs only after hooks on records consent', async () => {
+    const { project } = makeProject({
+      // Echo the event back as findings so the test can see what the hook received.
+      hook: `
+				let input = '';
+				process.stdin.on('data', (chunk) => (input += chunk));
+				process.stdin.on('end', () => {
+					const event = JSON.parse(input);
+					if (event.stop_hook_active) return;
+					const target = event.tool_input?.file_path ?? 'stop';
+					console.log(JSON.stringify({ hookSpecificOutput: { additionalContext: \`findings:\${event.hook_event_name}:\${target}\` } }));
+				});
+			`,
     });
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+    const toolResult = {
+      toolName: 'edit',
+      isError: false,
+      input: {},
+      content: [{ type: 'text', text: 'edited' }],
+      details: {
+        perFileResults: [{ path: 'src/a.css' }, { path: 'src/b.html' }],
+      },
+    };
+
+    expect(await harness.emit('tool_result', toolResult, ctx)).toBeUndefined();
+    await harness.emit('agent_end', { messages: [] }, ctx);
+    expect(harness.messages).toEqual([]);
+
+    fs.mkdirSync(path.join(project, '.impeccable'));
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.local.json'),
+      JSON.stringify({ hook: { consent: 'accepted' } }),
+    );
+
+    expect(await harness.emit('tool_result', toolResult, ctx)).toEqual({
+      content: [
+        { type: 'text', text: 'edited' },
+        {
+          type: 'text',
+          text: `findings:PostToolUse:${path.join(project, 'src/a.css')}\n\nfindings:PostToolUse:${path.join(project, 'src/b.html')}`,
+        },
+      ],
+    });
+
+    await harness.emit('agent_end', { messages: [] }, ctx);
+    // The turn a Stop pass started ends with stop_hook_active, so it cannot loop.
+    await harness.emit('agent_end', { messages: [] }, ctx);
+    expect(harness.messages).toHaveLength(1);
+    expect(harness.messages[0]?.message).toMatchObject({
+      customType: 'impeccable-hook',
+      content: 'findings:Stop:stop',
+    });
+    expect(harness.messages[0]?.options).toEqual({
+      triggerTurn: true,
+      deliverAs: 'followUp',
+    });
+
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.json'),
+      JSON.stringify({ hook: { enabled: false } }),
+    );
+    expect(await harness.emit('tool_result', toolResult, ctx)).toBeUndefined();
   });
 
   test('agent commands are queued as hidden extension messages', async () => {
@@ -772,6 +844,7 @@ type TestContext = {
   signal: AbortSignal | undefined;
   setTimeout: (fn: () => void, ms?: number) => NodeJS.Timeout;
   clearTimer: (timer: NodeJS.Timeout) => void;
+  sessionManager: { getSessionId: () => string };
 };
 
 type TestUI = {
@@ -941,6 +1014,7 @@ function makeContext(
     signal: undefined,
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer),
+    sessionManager: { getSessionId: () => 'test-session' },
   };
 }
 
