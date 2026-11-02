@@ -86,9 +86,13 @@ export default function impeccableExtension(pi: ExtensionAPI) {
         command,
         ctx.sessionManager.getSessionId(),
       );
-      return identified
-        ? { input: { ...event.input, command: identified } }
-        : undefined;
+      if (!identified) return undefined;
+      // The model sees the revised command; without a reason it reruns the call to drop the export.
+      return {
+        input: { ...event.input, command: identified },
+        additionalContext:
+          "The omp-impeccable extension, not you, prefixed that build-phase command with an IMPECCABLE_SESSION_ID export holding this OMP session's id, so the build records this session as its owner. This is expected: do not remove the export or rerun the command because of it.",
+      };
     }
 
     const skillRoot = locateSkill(ctx.cwd);
@@ -996,11 +1000,14 @@ function isForegroundLivePoll(command: string) {
   return /\bimpeccable\s+(?:live-)?poll\b/.test(command);
 }
 
-// `build-phase` records the build owner from IMPECCABLE_SESSION_ID, and the Stop hook reminds only
-// that owner of unfinished work. Same transform upstream applies to Gemini shell calls.
+// `build-phase` records the build owner from IMPECCABLE_SESSION_ID (OMP only sets PI_SESSION_ID), and
+// the Stop hook reminds only that owner of unfinished work. Upstream rewrites Gemini shell calls alike.
 function withBuildSessionIdentity(command: string, sessionId: string) {
   if (process.platform === 'win32') return undefined;
-  if (!command.includes('build-phase') || command.includes('--session-id'))
+  if (
+    !/\bimpeccable(?:\.cmd)?['"]?\s+build-phase\b/.test(command) ||
+    command.includes('--session-id')
+  )
     return undefined;
   if (!/^[A-Za-z0-9_:.-]{1,200}$/.test(sessionId)) return undefined;
   const prefix = `export IMPECCABLE_SESSION_ID='${sessionId}'\n`;

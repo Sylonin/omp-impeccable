@@ -768,13 +768,23 @@ Existing /audit command
       const start =
         '.omp/skills/impeccable/scripts/impeccable build-phase start --artifact index.html';
 
-      expect(await call(start)).toEqual({
+      const quoted =
+        "'/tmp/p/.omp/skills/impeccable/scripts/impeccable' build-phase advance";
+
+      expect(await call(start)).toMatchObject({
         input: {
           command: `export IMPECCABLE_SESSION_ID='test-session'\n${start}`,
           timeout: 60,
         },
+        additionalContext: expect.stringMatching(/expected: do not remove/),
       });
+      expect((await call(quoted))?.input?.command).toBe(
+        `export IMPECCABLE_SESSION_ID='test-session'\n${quoted}`,
+      );
       expect(await call(`${start} --session-id other-session`)).toBeUndefined();
+      expect(
+        await call('echo build-phase=$IMPECCABLE_SESSION_ID'),
+      ).toBeUndefined();
       expect(
         await call('.omp/skills/impeccable/scripts/impeccable detect --json'),
       ).toBeUndefined();
@@ -956,6 +966,7 @@ type ToolCallResult = {
   block?: boolean;
   reason?: string;
   input?: Record<string, unknown>;
+  additionalContext?: string;
 };
 
 type ToolTextResult = {
