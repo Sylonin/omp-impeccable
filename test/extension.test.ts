@@ -567,6 +567,36 @@ Existing /audit command
     });
   });
 
+  test.each([
+    ['variant_mount_failed', 'impeccable_live_reply'],
+    ['carbonize_cleanup', 'impeccable_live_complete'],
+  ])('live %s events reach the agent with %s as the next step', async (type, tool) => {
+    const event = { type, id: 'evt-2' };
+    const { project } = makeProject({
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+
+    await runCommand(harness, 'live', ctx);
+    await waitFor(
+      () =>
+        harness.messages.some(
+          (entry) => entry.message.customType === 'impeccable-live',
+        ),
+      `expected ${type} to reach the agent`,
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+
+    const liveMessage = harness.messages.find(
+      (entry) => entry.message.customType === 'impeccable-live',
+    );
+    expect(liveMessage?.message.content).toContain(
+      `call ${tool} with id "evt-2"`,
+    );
+  });
+
   test('live delivery can be set to aside', async () => {
     const event: LiveEvent = {
       type: 'generate',

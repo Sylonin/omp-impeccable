@@ -221,7 +221,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     name: 'impeccable_live_reply',
     label: 'Impeccable Live Reply',
     description:
-      'Reply to an Impeccable live event after handling generate, steer, or manual Apply work.',
+      'Reply to an Impeccable live event after handling generate, steer, manual Apply, or variant mount failure work.',
     parameters: liveReplyParams,
     async execute(
       _toolCallId,
@@ -566,9 +566,7 @@ function handleLiveEvent(
   if (event.type === 'prefetch') return startPoll(pi, live, ctx);
 
   const needsAgent =
-    agentReplyEvents.has(event.type) ||
-    event?._acceptResult?.carbonize === true ||
-    event?._completionAck?.ok === false;
+    agentReplyEvents.has(event.type) || needsLiveComplete(event);
   if (!needsAgent) {
     ctx.ui.notify(`Impeccable live: ${event.type}`, 'info');
     return startPoll(pi, live, ctx);
@@ -591,10 +589,7 @@ function liveEventPrompt(
   stderr: string,
   skillRoot: string,
 ) {
-  const isCarbonize =
-    event?._acceptResult?.carbonize === true ||
-    event?._completionAck?.ok === false;
-  const next = isCarbonize
+  const next = needsLiveComplete(event)
     ? `After cleanup, call impeccable_live_complete with id ${JSON.stringify(event.id)}. Do not poll manually.`
     : `After handling the event, call impeccable_live_reply with id ${JSON.stringify(event.id)} and the correct status. Do not reply with bash.`;
   return [
@@ -608,6 +603,14 @@ function liveEventPrompt(
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+function needsLiveComplete(event: LiveEventData) {
+  return (
+    event.type === 'carbonize_cleanup' ||
+    event._acceptResult?.carbonize === true ||
+    event._completionAck?.ok === false
+  );
 }
 
 async function pinCommand(
@@ -1556,4 +1559,11 @@ type LiveEventData = {
   [key: string]: unknown;
 };
 
-const agentReplyEvents = new Set(['generate', 'steer', 'manual_edit_apply']);
+// Upstream crates/live/src/live_poll.rs EVENT_TYPES_NEEDING_AGENT_REPLY.
+const agentReplyEvents = new Set([
+  'generate',
+  'steer',
+  'manual_edit_apply',
+  'carbonize_cleanup',
+  'variant_mount_failed',
+]);
