@@ -1258,8 +1258,12 @@ function locateSkill(cwd: string) {
 function ensureProjectOmpSkill(cwd: string) {
   const skillRoot = projectOmpSkillRoot(cwd);
   if (isSkillRoot(skillRoot)) return skillRoot;
+  // An existing upstream install in .agents: copy it into .omp and repoint its paths.
   const legacyRoot = projectAgentsSkillRoot(cwd);
-  if (isSkillRoot(legacyRoot)) return replaceProjectOmpSkill(legacyRoot, cwd);
+  if (!isSkillRoot(legacyRoot)) return undefined;
+  const migrated = replaceProjectOmpSkill(legacyRoot, cwd);
+  if (migrated) rewriteSkillRootReferences(migrated);
+  return migrated;
 }
 
 async function installProjectOmpSkill(cwd: string) {
@@ -1269,7 +1273,7 @@ async function installProjectOmpSkill(cwd: string) {
     const result = await runImpeccable(
       [
         'install',
-        '--providers=pi,claude-code',
+        '--providers=omp,claude-code',
         '--scope=project',
         '-y',
         '--no-hooks',
@@ -1280,9 +1284,9 @@ async function installProjectOmpSkill(cwd: string) {
       120_000,
     );
     if (result.code !== 0) return { result, skillRoot: undefined };
-    // The pi build uses OMP's `/` command syntax; the Claude build carries the shipped subagents.
+    // OMP skips .claude/agents, so the Claude build only supplies the shipped subagents.
     const skillRoot = replaceProjectOmpSkill(
-      join(stagingRoot, '.pi', 'skills', 'impeccable'),
+      join(stagingRoot, '.omp', 'skills', 'impeccable'),
       cwd,
     );
     if (skillRoot)
@@ -1300,7 +1304,6 @@ function replaceProjectOmpSkill(source: string, cwd: string) {
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dirname(dest), { recursive: true });
   cpSync(source, dest, { recursive: true });
-  rewriteSkillRootReferences(dest);
   if (!isSkillRoot(dest)) return undefined;
   return dest;
 }

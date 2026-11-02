@@ -16,7 +16,7 @@ That means you can keep chatting with the agent while Impeccable watches the bro
 - **Non-blocking live mode** — `/impeccable live` starts the helper server and background poller, then immediately returns control to OMP.
 - **Agent-native feedback loop** — browser events and Impeccable work arrive as hidden OMP extension messages.
 - **Quiet status UI** — OMP shows a compact `impeccable live` status while the background bridge is running.
-- **Upstream skill, no vendoring** — the plugin uses the official `impeccable` package to install/update the upstream skill, relocates the managed copy to `.omp/skills/impeccable` and the shipped subagents to `.omp/agents`, then publishes that skill path through OMP resource discovery.
+- **Upstream skill, no vendoring** — the plugin uses the official `impeccable` package to install/update upstream's OMP build of the skill into `.omp/skills/impeccable`, converts the shipped subagents into `.omp/agents`, then publishes that skill path through OMP resource discovery.
 
 ## Install
 
