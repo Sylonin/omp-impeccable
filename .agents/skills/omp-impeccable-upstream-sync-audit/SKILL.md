@@ -32,10 +32,13 @@ Use an `index.html` with gradient text and low-contrast colors so findings are g
 
 ## 4. Verify in real omp
 - Discovered agents: `omp -p "Without calling tools, list task agents starting with impeccable"`.
-- TUI in tmux: send the text, then `Escape` (closes the autocomplete popup), then `Enter`. Test a free-form docs prompt, `/impeccable live status`, and `/impeccable live --delivery=aside` (needs PRODUCT.md, DESIGN.md and `.impeccable/live/config.json`).
+- TUI in tmux: start a shell session (`tmux new-session -d -s imp -x 200 -y 50 -c <project>`), then `send-keys 'omp' Enter`; launching `omp` as the session command exits at once. Send text with `send-keys -l`, then `Escape` (closes the autocomplete popup), then `Enter`. Test a free-form docs prompt, `/impeccable live status`, and `/impeccable live --delivery=aside` (needs PRODUCT.md, DESIGN.md and `.impeccable/live/config.json` with `files`, `insertBefore`, `commentSyntax`, `cspChecked: true`).
+- Live events without a browser: read `port` and `token` from `.impeccable/live/server.json` and `curl -X POST http://localhost:<port>/events` with `{token, type, id, ...}`. Any type other than `generate`/`steer` needs a known session, so post a `steer` (`id` is 8 hex chars, plus `message` and `pageUrl`) first, then e.g. `variant_mount_failed` (`variant`, `url`, `error`) on the same id. The agent should answer through `impeccable_live_reply` and the poll should resume.
+- Pinned commands registered mid-session work but only show in autocomplete after an omp restart.
 - Mutation-check any new guard: remove it temporarily, confirm the test fails, then restore it.
 
 ## Pitfalls
 - Unit fixtures fake `scripts/impeccable` as a sh dispatcher to `scripts/verbs/<verb>.mjs`. Real behavior only shows up in the staged install.
 - `process.versions.bun` is unset under vitest, so the `BUN_BE_BUN` spawn path is only exercised in real omp.
+- A `tool_call` input revision is persisted as the model's own command. The model then believes it wrote the change and may rerun the call to undo it, so pair every revision with `additionalContext` and match commands narrowly. OMP exports `PI_SESSION_ID` to bash, but the engine reads only `IMPECCABLE_SESSION_ID` or `CODEX_THREAD_ID`.
 - Update CHANGELOG `## Unreleased` with each commit; the commits are conventional, and there is no upstream PR to jenkei.
