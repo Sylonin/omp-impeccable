@@ -717,6 +717,33 @@ Existing /audit command
     expect(reply).toBeUndefined();
   });
 
+  test.skipIf(process.platform === 'win32')(
+    'build-phase bash calls carry the session id the Stop hook checks',
+    async () => {
+      const harness = loadExtension();
+      const ctx = makeContext(root);
+      const call = (command: string) =>
+        harness.emit<ToolCallResult>(
+          'tool_call',
+          { toolName: 'bash', input: { command, timeout: 60 } },
+          ctx,
+        );
+      const start =
+        '.omp/skills/impeccable/scripts/impeccable build-phase start --artifact index.html';
+
+      expect(await call(start)).toEqual({
+        input: {
+          command: `export IMPECCABLE_SESSION_ID='test-session'\n${start}`,
+          timeout: 60,
+        },
+      });
+      expect(await call(`${start} --session-id other-session`)).toBeUndefined();
+      expect(
+        await call('.omp/skills/impeccable/scripts/impeccable detect --json'),
+      ).toBeUndefined();
+    },
+  );
+
   test('reply and complete tools call the skill launcher with the expected verbs and args', async () => {
     const replyArgs = path.join(
       os.tmpdir(),
@@ -891,6 +918,7 @@ type TestUI = {
 type ToolCallResult = {
   block?: boolean;
   reason?: string;
+  input?: Record<string, unknown>;
 };
 
 type ToolTextResult = {

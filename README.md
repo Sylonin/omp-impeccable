@@ -61,7 +61,7 @@ A request that starts with an OMP command word (`install`, `update`, `live`, `st
 
 Pinned shortcuts are handled by the plugin when it is loaded. The `.omp/commands/*.md` file is also a native OMP fallback prompt, so the project still documents the shortcut.
 
-Upstream installs the design hook as a harness manifest. OMP has none, so the plugin runs the same hook itself once `/impeccable hooks on` has recorded consent in `.impeccable/config.local.json`. It scans files changed by the `edit` and `write` tools and appends findings to the tool result. When the agent finishes, it scans the files changed during the session and, if there are findings, starts one follow-up turn to handle them.
+Upstream installs the design hook as a harness manifest. OMP has none, so the plugin runs the same hook itself once `/impeccable hooks on` has recorded consent in `.impeccable/config.local.json`. It scans files changed by the `edit` and `write` tools and appends findings to the tool result. When the agent finishes, it scans the files changed during the session and, if there are findings, starts one follow-up turn to handle them. It also passes the OMP session id to `build-phase` commands, so the end-of-run pass can remind the agent of a comp build it left unfinished.
 
 Start the non-blocking live loop:
 

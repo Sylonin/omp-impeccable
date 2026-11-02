@@ -78,10 +78,17 @@ export default function impeccableExtension(pi: ExtensionAPI) {
 
   pi.on('tool_call', (event, ctx) => {
     if (event.toolName !== 'bash') return;
-    const command = String(
-      (event.input as { command?: unknown })?.command ?? '',
-    );
-    if (!isForegroundLivePoll(command)) return;
+    const { command } = event.input;
+    if (typeof command !== 'string') return;
+    if (!isForegroundLivePoll(command)) {
+      const identified = withBuildSessionIdentity(
+        command,
+        ctx.sessionManager.getSessionId(),
+      );
+      return identified
+        ? { input: { ...event.input, command: identified } }
+        : undefined;
+    }
 
     const skillRoot = locateSkill(ctx.cwd);
     if (skillRoot) {
@@ -999,6 +1006,17 @@ function pathContract(skillRoot: string) {
 function isForegroundLivePoll(command: string) {
   if (command.includes('--reply')) return false;
   return /\bimpeccable\s+(?:live-)?poll\b/.test(command);
+}
+
+// `build-phase` records the build owner from IMPECCABLE_SESSION_ID, and the Stop hook reminds only
+// that owner of unfinished work. Same transform upstream applies to Gemini shell calls.
+function withBuildSessionIdentity(command: string, sessionId: string) {
+  if (process.platform === 'win32') return undefined;
+  if (!command.includes('build-phase') || command.includes('--session-id'))
+    return undefined;
+  if (!/^[A-Za-z0-9_:.-]{1,200}$/.test(sessionId)) return undefined;
+  const prefix = `export IMPECCABLE_SESSION_ID='${sessionId}'\n`;
+  return command.startsWith(prefix) ? undefined : `${prefix}${command}`;
 }
 
 function readDelivery(tokens: string[]): Delivery | undefined {

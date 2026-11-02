@@ -13,6 +13,7 @@
 - Install upstream's OMP build (`--providers=omp`), which uses `/impeccable` command syntax and `.omp/skills/impeccable` paths, instead of the Codex build, which uses `$impeccable`.
 - Install the shipped Impeccable subagents (finish reviewer, documenter, asset producer, manual edit applier) into `.omp/agents`, converted from their Claude Code definitions.
 - Run `/impeccable hooks <action>` through the skill launcher, and run the design detector hook after `edit` and `write` tool calls and at the end of each agent run once `/impeccable hooks on` has recorded consent.
+- Prefix `build-phase` bash commands with `IMPECCABLE_SESSION_ID`, as upstream does for Gemini, so the end-of-run hook pass can remind the agent of an unfinished comp build.
 - Send `variant_mount_failed` and `carbonize_cleanup` live events to the agent, matching upstream's list of events that need an agent reply. Previously they only raised a notification and nobody handled them.
 - Add `error` and `force` to `impeccable_live_complete` for `live-complete --error` and `--force`.
 
