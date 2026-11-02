@@ -18,6 +18,17 @@ That means you can keep chatting with the agent while Impeccable watches the bro
 - **Quiet status UI** — OMP shows a compact `impeccable live` status while the background bridge is running.
 - **Upstream skill, no vendoring** — the plugin uses the official `impeccable` package to install/update upstream's OMP build of the skill into `.omp/skills/impeccable`, converts the shipped subagents into `.omp/agents`, then publishes that skill path through OMP resource discovery.
 
+### Compared with upstream's own OMP support
+
+Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skill into `.omp/skills/impeccable` or `~/.omp/agent/skills`. That install is the same skill this plugin installs. Upstream leaves the rest out for OMP:
+
+| | Upstream `--providers=omp` | omp-impeccable |
+|---|---|---|
+| Entry point | `/skill:impeccable <request>` | `/impeccable <request>` with command completions, `/impeccable pin` shortcuts |
+| Subagents | None: OMP does not read `.claude/agents`, so the skill falls back to in-thread passes | Shipped subagents converted into `.omp/agents` |
+| Design hook | None; the skill asks for one manual detector run instead | Runs after `edit`/`write` and when the agent finishes |
+| Live mode | The agent runs `live-poll` as a foreground loop | Background poll; events arrive as hidden messages while OMP stays usable |
+
 ## Install
 
 ```bash
