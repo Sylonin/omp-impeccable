@@ -467,6 +467,43 @@ Existing /audit command
     expect(await harness.emit('tool_result', toolResult, ctx)).toBeUndefined();
   });
 
+  test('context output drops the manual detector run once the design hook is on', async () => {
+    const { project } = makeProject();
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+    const contextResult = {
+      toolName: 'bash',
+      isError: false,
+      input: { command: '.omp/skills/impeccable/scripts/impeccable context' },
+      content: [
+        {
+          type: 'text',
+          text: 'MANUAL_DETECTOR_REQUIRED: No automatic Impeccable design hook is active this session.',
+        },
+      ],
+    };
+
+    expect(
+      await harness.emit('tool_result', contextResult, ctx),
+    ).toBeUndefined();
+
+    fs.mkdirSync(path.join(project, '.impeccable'));
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.local.json'),
+      JSON.stringify({ hook: { consent: 'accepted' } }),
+    );
+    const result = await harness.emit<ToolTextResult>(
+      'tool_result',
+      contextResult,
+      ctx,
+    );
+
+    expect(result?.content).toHaveLength(2);
+    expect(result?.content[1]?.text).toMatch(
+      /overrides the MANUAL_DETECTOR_REQUIRED line above.*design hook is active in this session.*Skip that manual detector run/,
+    );
+  });
+
   test('agent commands are queued as hidden extension messages', async () => {
     const { project, skillRoot } = makeProject();
     const harness = loadExtension();

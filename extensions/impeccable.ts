@@ -16,6 +16,7 @@ import type { Readable } from 'node:stream';
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ToolResultEvent,
 } from '@oh-my-pi/pi-coding-agent/extensibility/extensions/types';
 import {
   agentCommands,
@@ -109,6 +110,8 @@ export default function impeccableExtension(pi: ExtensionAPI) {
   // Upstream's design hook, driven from OMP tool and agent events instead of a harness manifest.
   pi.on('tool_result', async (event, ctx) => {
     if (event.isError) return;
+    if (event.toolName === 'bash')
+      return withManualDetectorOverride(event.content, ctx.cwd);
     if (event.toolName !== 'edit' && event.toolName !== 'write') return;
     const skillRoot = designHookActive(ctx.cwd);
     if (!skillRoot) return;
@@ -187,12 +190,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       );
       const skillRoot = await ensureSkill(pi, ctx);
       if (!skillRoot) return;
-      sendExtensionPrompt(
-        pi,
-        ctx,
-        commandPrompt(args, skillRoot, ctx.cwd),
-        'followUp',
-      );
+      sendExtensionPrompt(pi, ctx, commandPrompt(args, skillRoot), 'followUp');
     },
   });
 
@@ -376,12 +374,7 @@ async function startLive(
       `Impeccable live needs setup:\n\n${JSON.stringify(parsed ?? boot.stdout, null, 2)}`,
     );
     showTransientStatus(ctx, 'live setup queued');
-    sendExtensionPrompt(
-      pi,
-      ctx,
-      commandPrompt('live', skillRoot, ctx.cwd),
-      'followUp',
-    );
+    sendExtensionPrompt(pi, ctx, commandPrompt('live', skillRoot), 'followUp');
     return;
   }
 
@@ -853,7 +846,7 @@ function registerPinnedCommand(
       sendExtensionPrompt(
         pi,
         ctx,
-        commandPrompt(invocation, skillRoot, ctx.cwd),
+        commandPrompt(invocation, skillRoot),
         'followUp',
       );
     },
@@ -980,17 +973,12 @@ The omp-impeccable extension handles /${command} directly when loaded. This file
 `;
 }
 
-function commandPrompt(args: string, skillRoot: string, cwd: string) {
+function commandPrompt(args: string, skillRoot: string) {
   return [
     `Handle this Impeccable invocation in OMP: /impeccable ${args.trim()}`.trimEnd(),
     pathContract(skillRoot),
     `Start by reading ${join(skillRoot, 'SKILL.md')}.`,
     'If a sub-command is invoked, read the matching reference file from that skill root before acting.',
-    ...(designHookActive(cwd)
-      ? [
-          'The omp-impeccable extension runs the Impeccable design hook after edit and write tool calls and when you finish, so the design hook is active: skip any MANUAL_DETECTOR_REQUIRED detector run.',
-        ]
-      : []),
   ].join('\n\n');
 }
 
@@ -1017,6 +1005,28 @@ function withBuildSessionIdentity(command: string, sessionId: string) {
   if (!/^[A-Za-z0-9_:.-]{1,200}$/.test(sessionId)) return undefined;
   const prefix = `export IMPECCABLE_SESSION_ID='${sessionId}'\n`;
   return command.startsWith(prefix) ? undefined : `${prefix}${command}`;
+}
+
+// Upstream `impeccable context` sees no OMP hook manifest, so it asks for a manual detector run
+// that this extension's design hook already covers.
+function withManualDetectorOverride(
+  content: ToolResultEvent['content'],
+  cwd: string,
+) {
+  const directive = content.some(
+    (block) =>
+      block.type === 'text' && block.text.includes('MANUAL_DETECTOR_REQUIRED:'),
+  );
+  if (!directive || !designHookActive(cwd)) return undefined;
+  return {
+    content: [
+      ...content,
+      {
+        type: 'text' as const,
+        text: 'omp-impeccable overrides the MANUAL_DETECTOR_REQUIRED line above. Upstream Impeccable cannot see OMP hooks, but the omp-impeccable design hook is active in this session: it runs after edit and write tool calls and when you finish. Skip that manual detector run.',
+      },
+    ],
+  };
 }
 
 function readDelivery(tokens: string[]): Delivery | undefined {
