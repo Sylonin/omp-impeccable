@@ -215,6 +215,16 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       .boolean()
       .describe('Set only for discard completion recovery.')
       .optional(),
+    error: z
+      .string()
+      .describe('Record the session as failed with this reason.')
+      .optional(),
+    force: z
+      .boolean()
+      .describe(
+        'Complete despite a source_dirty refusal. Use only when its findings are false positives.',
+      )
+      .optional(),
   });
 
   pi.registerTool({
@@ -289,6 +299,8 @@ export default function impeccableExtension(pi: ExtensionAPI) {
         );
       const argv = ['--id', params.id];
       if (params.discarded) argv.push('--discarded');
+      if (params.error) argv.push('--error', params.error);
+      if (params.force) argv.push('--force');
       const result = await runLauncher(
         skillRoot,
         'live-complete',
