@@ -5,20 +5,22 @@ description: "Use when the omp-impeccable fork breaks after upstream Impeccable 
 
 # omp-impeccable upstream sync audit
 
-Fork: `Sylonin/omp-impeccable` at `~/Proj/p/omp-impeccable`, linked into omp with `omp plugin link`. Run pnpm through a corepack shim: `corepack enable --install-directory /tmp/pnpm-shim pnpm`, then `PATH=/tmp/pnpm-shim:$PATH pnpm release:check`.
+Fork: `Sylonin/omp-impeccable` at `~/Proj/p/omp-impeccable`, linked into omp with `omp plugin link`. Run pnpm through a corepack shim: `mkdir -p /tmp/pnpm-shim && corepack enable --install-directory /tmp/pnpm-shim pnpm`, then `PATH=/tmp/pnpm-shim:$PATH pnpm release:check`.
 
 ## 1. Find what upstream changed
-- Tree: `gh api 'repos/pbakaus/impeccable/git/trees/main?recursive=1' --jq '.tree[].path'`.
-- Compare against `.agents/skills/impeccable/SKILL.md`: the routing rules, the command table (`grep -oE '^\| \`[a-z-]+'`), and the Pin, Hooks and Doctor lines.
-- Diff the provider builds (`.pi` vs `.agents` vs `.claude`) to see what differs per harness. Only `.pi` uses `/impeccable`; Codex uses `$impeccable`.
-- Hook protocol: read `crates/hook/src/hook.rs` and `hook_lib.rs` (the `payload()` output shape, the `stop_hook_active` guard). Consent logic: `crates/context/src/context_cli.rs`.
+- Commits since the last sync: `gh api 'repos/pbakaus/impeccable/commits?since=<date>&per_page=100' --paginate`, or a blob-filtered clone (`git clone --filter=blob:none`) and `git diff <base> HEAD -- .omp .claude/agents crates/hook crates/live crates/context docs/HARNESSES.md`.
+- Upstream has its own `omp` provider (4.6+, PR #900): skill only. `docs/HARNESSES.md` lists no OMP hook and no OMP subagents, and OMP skips `.claude/agents`. Re-check that row first: if upstream ever ships OMP hooks, subagents or a background live loop, decide whether this plugin is still needed.
+- Compare against `.omp/skills/impeccable/SKILL.md`: the routing rules, the command table (`grep -oE '^\| \`[a-z-]+'`), and the Pin, Hooks and Doctor lines.
+- Live protocol: `EVENT_TYPES_NEEDING_AGENT_REPLY` in `crates/live/src/live_poll.rs` must match `agentReplyEvents`; check `live-complete` and `live-poll --reply` flags.
+- Hook protocol: read `crates/hook/src/hook.rs`, `hook_lib.rs` (`resolve_harness`, the `payload()` output shape, the `stop_hook_active` guard) and `build_completion.rs` (`IMPECCABLE_SESSION_ID`). Hook mode and `MANUAL_DETECTOR_REQUIRED`: `automatic_hook_mode` in `crates/context/src/context_cli.rs`. The Hermes plugin (`.hermes/plugins/impeccable-design-hook`) is the closest upstream analogue to this plugin's hook.
 
 ## 2. Stage a real install outside omp
 ```sh
 mkdir -p /tmp/stage/.git && cd /tmp/stage
-node ~/Proj/p/omp-impeccable/node_modules/impeccable/cli/bin/cli.js install --providers=pi,claude-code --scope=project -y --no-hooks --force
+node ~/Proj/p/omp-impeccable/node_modules/impeccable/cli/bin/cli.js install --providers=omp,claude-code --scope=project -y --no-hooks --force
 ```
-- `Download failed: invalid zip data` means the CLI is too old (3.x follows one redirect). Bump the `impeccable` dep.
+- `Download failed: invalid zip data` means the CLI is too old (3.x follows one redirect); `Unknown provider(s): omp` means it predates 4.6. Bump the `impeccable` dep.
+- The `omp` build should name only `.omp/skills/impeccable` paths: `grep -rlE '\.(agents|pi|claude)/skills/impeccable' --include=*.md .omp`.
 - Check `scripts/impeccable --help` for renamed verbs. `live*.mjs` scripts were replaced by launcher verbs (`live`, `live-poll`, `live-status`, `live-server`, `live-complete`, `hooks`, `hook`).
 - Check that `.claude/agents/*.md` frontmatter still converts. OMP ignores `effort` (map it to `thinkingLevel`) and treats `model: inherit` as a literal model name, so drop that line.
 
