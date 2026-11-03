@@ -17,6 +17,7 @@
 - Prefix bash commands that run the launcher's `build-phase` verb with `IMPECCABLE_SESSION_ID`, as upstream does for Gemini, so the end-of-run hook pass can remind the agent of an unfinished comp build. A note tells the agent the extension added the export.
 - Send `variant_mount_failed` and `carbonize_cleanup` live events to the agent, matching upstream's list of events that need an agent reply. Previously they only raised a notification and nobody handled them.
 - Add `error` and `force` to `impeccable_live_complete` for `live-complete --error` and `--force`.
+- Serve Impeccable's decision page (`serve-question`) and component review (`component-review serve`) when a user with a desktop is in the session. OMP sets `CI=true` in every shell, which Impeccable reads as no browser, so both refused. The plugin now exports `IMPECCABLE_QUESTION_FORCE=1` for the session's shells at session start, leaving commands unchanged and a user-set value alone, and opens each served page once in the user's browser, following Impeccable's browser preference order.
 
 ## 0.1.0 - 2026-06-21
 

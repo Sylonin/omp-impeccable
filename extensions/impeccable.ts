@@ -31,6 +31,8 @@ export default function impeccableExtension(pi: ExtensionAPI) {
   const live: LiveState = { active: false, delivery: 'steer' };
   const pinnedCommandNames = new Set<string>();
   let designHookContinuing = false;
+  const servedPages = new Map<string, Promise<string>>();
+  let exportedBrowserForce = false;
 
   pi.on('resources_discover', (event) => {
     const skillRoot = locateSkill(event.cwd);
@@ -39,6 +41,10 @@ export default function impeccableExtension(pi: ExtensionAPI) {
 
   pi.on('session_start', (_event, ctx) => {
     ctxRef = ctx;
+    exportedBrowserForce = exportBrowserForce(
+      userCanOpenBrowser(ctx.hasUI),
+      exportedBrowserForce,
+    );
     registerPinnedCommands(pi, pinnedCommandNames, ctx.cwd);
     if (live.active) startIndicator(live, ctx);
   });
@@ -111,11 +117,32 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     };
   });
 
+  // A served page prints its URL at once, while `component-review serve` keeps running until the user submits.
+  pi.on('tool_execution_update', async (event, ctx) => {
+    if (event.toolName !== 'bash') return;
+    const { command } = (event.args ?? {}) as { command?: unknown };
+    const result = event.partialResult as { content?: unknown } | undefined;
+    await openServedPage(servedPages, command, textOf(result?.content), ctx);
+  });
+
   // Upstream's design hook, driven from OMP tool and agent events instead of a harness manifest.
   pi.on('tool_result', async (event, ctx) => {
     if (event.isError) return;
-    if (event.toolName === 'bash')
-      return withManualDetectorOverride(event.content, ctx.cwd);
+    if (event.toolName === 'bash') {
+      const opened = await openServedPage(
+        servedPages,
+        event.input.command,
+        textOf(event.content),
+        ctx,
+      );
+      const content: ToolResultEvent['content'] = opened
+        ? [...event.content, { type: 'text', text: opened }]
+        : event.content;
+      return (
+        withManualDetectorOverride(content, ctx.cwd) ??
+        (opened ? { content } : undefined)
+      );
+    }
     if (event.toolName !== 'edit' && event.toolName !== 'write') return;
     const skillRoot = designHookActive(ctx.cwd);
     if (!skillRoot) return;
@@ -1012,6 +1039,147 @@ function withBuildSessionIdentity(command: string, sessionId: string) {
   if (!/^[A-Za-z0-9_:.-]{1,200}$/.test(sessionId)) return undefined;
   const prefix = `export IMPECCABLE_SESSION_ID='${sessionId}'\n`;
   return command.startsWith(prefix) ? undefined : `${prefix}${command}`;
+}
+
+// Impeccable's decision page and component review exit "no browser" when CI is set. OMP sets CI=true in every
+// shell command it runs, so its own environment, not the shell's, says whether a user can open the page.
+function userCanOpenBrowser(
+  hasUI: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const set = (key: string) => !!env[key];
+  if (!hasUI || set('CI') || set('IMPECCABLE_QUESTION_DISABLED')) return false;
+  if (set('SSH_CONNECTION') && !set('DISPLAY')) return false;
+  return platform !== 'linux' || set('DISPLAY') || set('WAYLAND_DISPLAY');
+}
+
+// Upstream's override for that check. omp recaptures process.env for its shells after session_start handlers,
+// so the value reaches every command unchanged: a rewritten command makes the agent think it wrote the
+// export itself. Leaves a value the user set alone, and withdraws only its own.
+function exportBrowserForce(canOpenBrowser: boolean, exportedBefore: boolean) {
+  if (canOpenBrowser && !process.env.IMPECCABLE_QUESTION_FORCE) {
+    process.env.IMPECCABLE_QUESTION_FORCE = '1';
+    return true;
+  }
+  if (!canOpenBrowser && exportedBefore) {
+    delete process.env.IMPECCABLE_QUESTION_FORCE;
+    return false;
+  }
+  return exportedBefore;
+}
+
+// A started decision page (`serve-question --start`) does not open the browser unless given --open,
+// and component-review serve never does; both print their URL for the harness to open.
+function opensNoBrowserItself(command: string) {
+  if (/\bimpeccable(?:\.cmd)?['"]?\s+component-review\s+serve\b/.test(command))
+    return true;
+  return (
+    /\bimpeccable(?:\.cmd)?['"]?\s+serve-question\b/.test(command) &&
+    /\s--start\b/.test(command) &&
+    !/\s--open\b/.test(command)
+  );
+}
+
+function servedPageUrl(text: string) {
+  let url = /^QUESTION URL: (\S+)$/m.exec(text)?.[1];
+  const review = /^COMPONENT REVIEW: (\{.*\})$/m.exec(text)?.[1];
+  if (!url && review) {
+    const service = parseJson(review) as { url?: unknown } | null;
+    if (typeof service?.url === 'string') url = service.url;
+  }
+  // Only the loopback servers Impeccable starts; a URL elsewhere in the output is not a page to open.
+  return url &&
+    /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}\//.test(url)
+    ? url
+    : undefined;
+}
+
+function textOf(content: unknown) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block: { type?: unknown; text?: unknown }) =>
+      block?.type === 'text' && typeof block.text === 'string'
+        ? block.text
+        : '',
+    )
+    .join('\n');
+}
+
+// Opens each served page once per session and resolves to the note the tool result carries.
+function openServedPage(
+  pages: Map<string, Promise<string>>,
+  command: unknown,
+  output: string,
+  ctx: ExtensionContext,
+) {
+  if (typeof command !== 'string' || !opensNoBrowserItself(command))
+    return undefined;
+  const url = servedPageUrl(output);
+  if (!url || !userCanOpenBrowser(ctx.hasUI)) return undefined;
+  let opened = pages.get(url);
+  if (!opened) {
+    opened = openPage(url, ctx);
+    pages.set(url, opened);
+  }
+  return opened;
+}
+
+async function openPage(url: string, ctx: ExtensionContext) {
+  const [program, args] = browserCommand(url, projectRoot(ctx.cwd));
+  const { promise: spawned, resolve: done } = Promise.withResolvers<
+    string | undefined
+  >();
+  const child = spawn(program, args, { stdio: 'ignore', detached: true });
+  child.once('spawn', () => {
+    child.unref();
+    done(undefined);
+  });
+  child.once('error', (err) => done(err.message));
+  const error = await spawned;
+  if (error) {
+    ctx.ui.notify(
+      `Open the Impeccable page in your browser: ${url} (${program}: ${error})`,
+      'warning',
+    );
+    return `omp-impeccable could not open ${url} in the user's browser (${program}: ${error}). Show the user that URL.`;
+  }
+  ctx.ui.notify(`Opened the Impeccable page in your browser: ${url}`, 'info');
+  return `omp-impeccable opened ${url} in the user's browser. Do not open it again or in the browser tool; wait for the user's decision.`;
+}
+
+// Upstream's browser preference (crates/live/src/browser_open.rs): IMPECCABLE_BROWSER, then `browser` in
+// .impeccable/config.local.json or config.json, then BROWSER, then the platform's opener. A path runs with
+// the URL; on macOS any other value names an application.
+export function browserCommand(
+  url: string,
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): [string, string[]] {
+  const configured = (name: string) => {
+    const file = join(root, '.impeccable', name);
+    const config = existsSync(file)
+      ? (parseJson(readFileSync(file, 'utf8')) as { browser?: unknown } | null)
+      : null;
+    return typeof config?.browser === 'string' ? config.browser.trim() : '';
+  };
+  const preference =
+    env.IMPECCABLE_BROWSER?.trim() ||
+    configured('config.local.json') ||
+    configured('config.json') ||
+    env.BROWSER?.trim();
+  if (preference) {
+    if (/[/\\]/.test(preference) || existsSync(preference))
+      return [preference, [url]];
+    if (platform === 'darwin') return ['open', ['-a', preference, url]];
+    if (platform === 'win32')
+      return ['cmd', ['/c', 'start', '', preference, url]];
+    return [preference, [url]];
+  }
+  if (platform === 'darwin') return ['open', [url]];
+  if (platform === 'win32') return ['cmd', ['/c', 'start', '', url]];
+  return ['xdg-open', [url]];
 }
 
 // Upstream `impeccable context` sees no OMP hook manifest, so it asks for a manual detector run

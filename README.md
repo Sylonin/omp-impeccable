@@ -28,6 +28,7 @@ Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skil
 | Subagents | None: OMP does not read `.claude/agents`, so the skill falls back to in-thread passes | Shipped subagents converted into `.omp/agents` |
 | Design hook | None; the skill asks for one manual detector run instead | Runs after `edit`/`write` and when the agent finishes |
 | Live mode | The agent runs `live-poll` as a foreground loop | Background poll; events arrive as hidden messages while OMP stays usable |
+| Decision page and component review | `serve-question` and `component-review serve` refuse with "no browser", because OMP sets `CI=true` in its shell | Served, and opened in your browser |
 
 ## Install
 
@@ -99,6 +100,12 @@ Check or stop live mode:
 ```
 
 You can also say `stop live` to stop it quietly.
+
+### Decision pages and component reviews
+
+Impeccable asks for some choices on a local web page: the direction round's decision page (`serve-question`) and the component review (`component-review serve`). Both refuse to start when `CI` is set, and OMP sets `CI=true` in every shell command, so on their own they report "no browser" even with you at the desktop.
+
+When the OMP session has a UI and its own environment shows a desktop (no `CI`, a display on Linux, not SSH without one), the plugin exports Impeccable's `IMPECCABLE_QUESTION_FORCE=1` override for the session's shells. Commands stay as the agent wrote them. Once a page prints its URL, the plugin opens it in your browser and tells the agent so. The browser follows Impeccable's own order: `IMPECCABLE_BROWSER`, then `browser` in `.impeccable/config.local.json` or `config.json`, then `BROWSER`, then the system opener. A blocking `serve-question` and `serve-question --start --open` open the page themselves. A value of `IMPECCABLE_QUESTION_FORCE` you set yourself is left alone.
 
 
 ## Attribution

@@ -8,9 +8,10 @@ import type {
   RegisteredCommand,
   ToolDefinition,
 } from '@oh-my-pi/pi-coding-agent/extensibility/extensions/types';
-import { describe, expect, onTestFinished, test } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 
 import impeccableExtension, {
+  browserCommand,
   parseCommandMetadata,
   summarizeLiveStatus,
 } from '../extensions/impeccable.ts';
@@ -791,6 +792,169 @@ Existing /audit command
     },
   );
 
+  test('a session the user can see exports IMPECCABLE_QUESTION_FORCE for its shells', async () => {
+    desktopSession();
+    vi.stubEnv('IMPECCABLE_QUESTION_FORCE', '');
+    const harness = loadExtension();
+    const start = (ctx = makeContext(root)) =>
+      harness.emit('session_start', {}, ctx);
+
+    await start();
+    expect(process.env.IMPECCABLE_QUESTION_FORCE).toBe('1');
+    // The page still serves through the unchanged command.
+    const review =
+      '.omp/skills/impeccable/scripts/impeccable component-review serve --session abc';
+    expect(
+      await harness.emit(
+        'tool_call',
+        { toolName: 'bash', input: { command: review } },
+        makeContext(root),
+      ),
+    ).toBeUndefined();
+    // A later session with no UI withdraws the value the extension set.
+    await start(makeContext(root, { hasUI: false }));
+    expect(process.env.IMPECCABLE_QUESTION_FORCE).toBeUndefined();
+    // omp's own process in CI, or over SSH with no display, cannot open the page.
+    vi.stubEnv('CI', 'true');
+    await start();
+    expect(process.env.IMPECCABLE_QUESTION_FORCE).toBeUndefined();
+    vi.stubEnv('CI', '');
+    vi.stubEnv('SSH_CONNECTION', '10.0.0.2 50000 10.0.0.1 22');
+    vi.stubEnv('DISPLAY', '');
+    vi.stubEnv('WAYLAND_DISPLAY', 'wayland-1');
+    await start();
+    expect(process.env.IMPECCABLE_QUESTION_FORCE).toBeUndefined();
+    // A value the user set is theirs: a session with no UI leaves it alone.
+    vi.stubEnv('IMPECCABLE_QUESTION_FORCE', '1');
+    const own = loadExtension();
+    await own.emit('session_start', {}, makeContext(root, { hasUI: false }));
+    expect(process.env.IMPECCABLE_QUESTION_FORCE).toBe('1');
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'a served page opens once in the user browser and the tool result says so',
+    async () => {
+      desktopSession();
+      const opened = recordingBrowser();
+      const harness = loadExtension();
+      const ctx = makeContext(root);
+      const launcher = '.omp/skills/impeccable/scripts/impeccable';
+      const review = `${launcher} component-review serve --session abc`;
+      const reviewOutput =
+        'COMPONENT REVIEW: {"url":"http://127.0.0.1:41465/","pid":7}\n';
+      const update = (command: string, text: string) =>
+        harness.emit(
+          'tool_execution_update',
+          {
+            toolName: 'bash',
+            args: { command },
+            partialResult: { content: [{ type: 'text', text }] },
+          },
+          ctx,
+        );
+      const result = (command: string, text: string, context = ctx) =>
+        harness.emit<{ content: Array<{ type: string; text: string }> }>(
+          'tool_result',
+          {
+            toolName: 'bash',
+            isError: false,
+            input: { command },
+            content: [{ type: 'text', text }],
+          },
+          context,
+        );
+
+      // The review server keeps running, so the URL arrives in a streamed update.
+      await update(review, reviewOutput);
+      await update(review, `${reviewOutput}COMPONENT REVIEW: submitted\n`);
+      const final = await result(
+        review,
+        `${reviewOutput}COMPONENT REVIEW: submitted\n`,
+      );
+      await waitFor(() => opened().length > 0, 'the browser was not started');
+      expect(final?.content.at(-1)?.text).toMatch(
+        /opened http:\/\/127\.0\.0\.1:41465\/ in the user's browser\. Do not open it again/,
+      );
+      expect(ctx.ui.notifications.at(-1)).toEqual({
+        message:
+          'Opened the Impeccable page in your browser: http://127.0.0.1:41465/',
+        type: 'info',
+      });
+
+      await result(
+        `${launcher} serve-question --start --payload q.json`,
+        'QUESTION URL: http://127.0.0.1:5000/\nQUESTION KEY: k\n',
+      );
+      // A blocking serve-question and --start --open open the browser themselves.
+      await result(
+        `${launcher} serve-question --payload q.json`,
+        'QUESTION URL: http://127.0.0.1:5001/\n',
+      );
+      await result(
+        `${launcher} serve-question --start --open --payload q.json`,
+        'QUESTION URL: http://127.0.0.1:5002/\n',
+      );
+      // Only Impeccable's loopback servers, and only for a session with a UI.
+      expect(
+        await result(
+          review,
+          'COMPONENT REVIEW: {"url":"https://example.com/"}\n',
+        ),
+      ).toBeUndefined();
+      await result(
+        review,
+        'COMPONENT REVIEW: {"url":"http://127.0.0.1:6000/"}\n',
+        makeContext(root, { hasUI: false }),
+      );
+      await waitFor(
+        () => opened().length > 1,
+        'the decision page was not opened',
+      );
+      await delay(100);
+      expect(opened()).toEqual([
+        'http://127.0.0.1:41465/',
+        'http://127.0.0.1:5000/',
+      ]);
+    },
+  );
+
+  test('the browser follows upstream preference order', () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'omp-impeccable-browser-'),
+    );
+    onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const url = 'http://127.0.0.1:1/';
+    const pick = (
+      env: NodeJS.ProcessEnv,
+      platform: NodeJS.Platform = 'linux',
+    ) => browserCommand(url, dir, env, platform);
+
+    expect(pick({})).toEqual(['xdg-open', [url]]);
+    expect(pick({}, 'darwin')).toEqual(['open', [url]]);
+    expect(pick({}, 'win32')).toEqual(['cmd', ['/c', 'start', '', url]]);
+    expect(pick({ BROWSER: 'firefox' })).toEqual(['firefox', [url]]);
+    fs.mkdirSync(path.join(dir, '.impeccable'));
+    fs.writeFileSync(
+      path.join(dir, '.impeccable/config.json'),
+      '{"browser":"Safari"}',
+    );
+    expect(pick({ BROWSER: 'firefox' }, 'darwin')).toEqual([
+      'open',
+      ['-a', 'Safari', url],
+    ]);
+    fs.writeFileSync(
+      path.join(dir, '.impeccable/config.local.json'),
+      '{"browser":"chromium"}',
+    );
+    expect(pick({ BROWSER: 'firefox' })).toEqual(['chromium', [url]]);
+    expect(
+      pick(
+        { IMPECCABLE_BROWSER: '/opt/b/browser', BROWSER: 'firefox' },
+        'darwin',
+      ),
+    ).toEqual(['/opt/b/browser', [url]]);
+  });
+
   test('reply and complete tools call the skill launcher with the expected verbs and args', async () => {
     const replyArgs = path.join(
       os.tmpdir(),
@@ -1169,4 +1333,29 @@ async function waitFor(
     await delay(10);
   }
   throw new Error(message);
+}
+
+// OMP's own process on a local desktop: no CI, a display. The shell that runs the tests may set CI=true.
+function desktopSession() {
+  vi.stubEnv('CI', '');
+  vi.stubEnv('IMPECCABLE_QUESTION_DISABLED', '');
+  vi.stubEnv('SSH_CONNECTION', '');
+  vi.stubEnv('DISPLAY', ':0');
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+}
+
+// IMPECCABLE_BROWSER pointed at a script that records each URL it is started with.
+function recordingBrowser(): () => string[] {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-impeccable-open-'));
+  const log = path.join(dir, 'opened');
+  const script = path.join(dir, 'browser');
+  fs.writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$1" >> '${log}'\n`, {
+    mode: 0o755,
+  });
+  vi.stubEnv('IMPECCABLE_BROWSER', script);
+  onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return () =>
+    fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
 }
