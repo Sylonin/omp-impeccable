@@ -99,7 +99,7 @@ Check or stop live mode:
 /impeccable stop
 ```
 
-You can also say `stop live` to stop it quietly.
+You can also say `stop live` to stop it quietly. Quitting OMP while the agent is still handling a live event asks you to confirm first.
 
 ### Decision pages and component reviews
 

@@ -664,6 +664,46 @@ Existing /audit command
     expect(liveMessage?.options?.deliverAs).toBe('aside');
   });
 
+  test('quitting while the agent handles a live event asks first', async () => {
+    const event: LiveEvent = {
+      type: 'generate',
+      id: 'evt-1',
+      prompt: 'Make the hero sharper',
+    };
+    const { project } = makeProject({
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+    const quit = { signal: new AbortController().signal };
+
+    expect(await harness.emit('session_before_shutdown', quit, ctx)).toBe(
+      undefined,
+    );
+    expect(ctx.ui.confirms).toEqual([]);
+
+    await runCommand(harness, 'live', ctx);
+    await waitFor(
+      () =>
+        harness.messages.some(
+          (entry) => entry.message.customType === 'impeccable-live',
+        ),
+      'expected a hidden live event message',
+    );
+
+    ctx.ui.confirmAnswer = false;
+    expect(await harness.emit('session_before_shutdown', quit, ctx)).toEqual({
+      cancel: true,
+    });
+    expect(ctx.ui.confirms.at(-1)?.message).toMatch(/live generate event/);
+    ctx.ui.confirmAnswer = true;
+    expect(await harness.emit('session_before_shutdown', quit, ctx)).toBe(
+      undefined,
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+  });
+
   test('session shutdown stops live server and ignores killed polls', async () => {
     const stopArgs = path.join(
       os.tmpdir(),
@@ -1121,9 +1161,12 @@ type TestUI = {
     type?: 'info' | 'warning' | 'error';
   }>;
   statuses: Array<{ key: string; value: string | undefined }>;
+  confirms: Array<{ title: string; message: string }>;
+  confirmAnswer: boolean;
   theme: { fg: (color: string, text: string) => string };
   notify: (message: string, type?: 'info' | 'warning' | 'error') => void;
   setStatus: (key: string, value: string | undefined) => void;
+  confirm: (title: string, message: string) => Promise<boolean>;
 };
 
 type ToolCallResult = {
@@ -1267,6 +1310,8 @@ function makeContext(
   const ui: TestUI = {
     notifications,
     statuses,
+    confirms: [],
+    confirmAnswer: true,
     theme: { fg: (_color, text) => text },
     notify(message, type) {
       notifications.push({ message, type });
@@ -1274,6 +1319,10 @@ function makeContext(
     },
     setStatus(key, value) {
       statuses.push({ key, value });
+    },
+    async confirm(title, message) {
+      this.confirms.push({ title, message });
+      return this.confirmAnswer;
     },
   };
   return {

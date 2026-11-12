@@ -73,6 +73,18 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     }
   });
 
+  // Quitting while the agent handles a live event can leave its unfinished edits in source files.
+  pi.on('session_before_shutdown', async (event, ctx) => {
+    const pending = pendingLiveEvent(live);
+    if (!pending || !ctx.hasUI) return;
+    const quit = await ctx.ui.confirm(
+      'Quit during an Impeccable live event?',
+      `The agent is still handling a live ${pending} event. Quitting now can leave its unfinished edits in your source files.`,
+      { signal: event.signal },
+    );
+    return quit ? undefined : { cancel: true };
+  });
+
   pi.on('input', async (event, ctx) => {
     if (event.source === 'extension') return;
     if (
@@ -654,6 +666,14 @@ function needsLiveComplete(event: LiveEventData) {
     event._acceptResult?.carbonize === true ||
     event._completionAck?.ok === false
   );
+}
+
+/** The type of the live event the agent still owes a reply or cleanup for. */
+function pendingLiveEvent(live: LiveState) {
+  const { pausedFor } = live;
+  if (!pausedFor || pausedFor === 'poll-error' || pausedFor === 'parse-error')
+    return undefined;
+  return live.lastEvent?.type ?? pausedFor;
 }
 
 async function pinCommand(
@@ -1762,7 +1782,7 @@ type LiveState = {
   delivery: Delivery;
   poll?: ChildProcessByStdio<null, Readable, Readable>;
   pausedFor?: string;
-  lastEvent?: unknown;
+  lastEvent?: LiveEventData;
 };
 
 type LiveEventData = {
