@@ -20,13 +20,13 @@ That means you can keep chatting with the agent while Impeccable watches the bro
 
 ### Compared with upstream's own OMP support
 
-Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skill into `.omp/skills/impeccable` or `~/.omp/agent/skills`. That install is the same skill this plugin installs. Upstream leaves the rest out for OMP:
+Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skill into `.omp/skills/impeccable` or `~/.omp/agent/skills`. That install is the same skill this plugin installs. As of 4.10, upstream still leaves the rest out for OMP:
 
 | | Upstream `--providers=omp` | omp-impeccable |
 |---|---|---|
 | Entry point | `/skill:impeccable <request>` | `/impeccable <request>` with command completions, `/impeccable pin` shortcuts |
-| Subagents | None: OMP does not read `.claude/agents`, so the skill falls back to in-thread passes | Shipped subagents converted into `.omp/agents` |
-| Design hook | None; the skill asks for one manual detector run instead | Runs after `edit`/`write` and when the agent finishes |
+| Subagents | None: OMP does not read `.claude/agents`, so the skill falls back to in-thread passes | Shipped subagents (finish reviewer, motion reviewer, documenter, asset producer, manual edit applier) converted into `.omp/agents` |
+| Design hook | None; the skill asks for one manual detector run instead, and `hooks status` reports no wired harness | Runs after `edit`/`write` and when the agent finishes |
 | Live mode | The agent runs `live-poll` as a foreground loop | Background poll; events arrive as hidden messages while OMP stays usable |
 | Decision page and component review | `serve-question` and `component-review serve` refuse with "no browser", because OMP sets `CI=true` in its shell | Served, and opened in your browser |
 
@@ -48,7 +48,7 @@ Install or update the upstream Impeccable skill:
 
 ```text
 /impeccable install              # installs latest upstream skill into .omp/skills/impeccable and its subagents into .omp/agents
-/impeccable update               # updates that skill from upstream
+/impeccable update               # updates that skill from upstream, then shows the project's doctor report
 ```
 
 Run Impeccable from OMP. As in the [Impeccable docs](https://impeccable.style/docs/), `/impeccable` takes a command or a plain request, and anything that is not one of the OMP commands below goes to the skill as written:
@@ -73,13 +73,17 @@ A request that starts with an OMP command word (`install`, `update`, `live`, `st
 
 Pinned shortcuts are handled by the plugin when it is loaded. The `.omp/commands/*.md` file is also a native OMP fallback prompt, so the project still documents the shortcut.
 
-Upstream installs the design hook as a harness manifest. OMP has none, so the plugin runs the same hook itself once `/impeccable hooks on` has recorded consent in `.impeccable/config.local.json`. It scans files changed by the `edit` and `write` tools and appends findings to the tool result. When the agent finishes, it scans the files changed during the session and, if there are findings, starts one follow-up turn to handle them. Because upstream `impeccable context` cannot see this hook, the plugin marks its `MANUAL_DETECTOR_REQUIRED` request as covered. It also passes the OMP session id to `build-phase` commands, so the end-of-run pass can remind the agent of a comp build it left unfinished.
+Upstream installs the design hook as a harness manifest. OMP has none, so the plugin runs the same hook itself once `/impeccable hooks on` has recorded consent in `.impeccable/config.local.json`. It scans files changed by the `edit` and `write` tools and appends findings to the tool result. When the agent finishes, it runs upstream's deep pass over the files changed during the session, including UI files the agent wrote through the shell, and, if there are findings, starts one follow-up turn to handle them. Upstream `impeccable context` and `hooks status` cannot see this hook, so the plugin marks their `MANUAL_DETECTOR_REQUIRED` request and "not wired" lines as covered. It also passes the OMP session id to `build-phase` commands, so the end-of-run pass can remind the agent of a comp build it left unfinished.
 
 Start the non-blocking live loop:
 
 ```text
 /impeccable live
+/impeccable live --target apps/web/src/pages/pricing.tsx
+/impeccable live the pricing page
 ```
+
+The plugin boots Live with the flags upstream's live reference requires (`--allow-missing-context --dev-url --auto-config`), so a missing PRODUCT.md or DESIGN.md does not block it and a plain HTML or Vite page gets its live config written for you. `--target` is passed to the boot; a request in words goes to the agent, which works out the target. The plugin then tells you the page URL and opens it in your browser when no page is connected yet, using the same browser order as decision pages. When the boot finds no running dev server, or needs setup it cannot do alone, the agent takes over and boots again once it is fixed.
 
 While live mode is running, OMP remains usable. Impeccable events are delivered in the background, and the agent can reply through `impeccable_live_reply` / `impeccable_live_complete` without exposing the polling loop as a foreground task.
 
@@ -107,6 +111,9 @@ Impeccable asks for some choices on a local web page: the direction round's deci
 
 When the OMP session has a UI and its own environment shows a desktop (no `CI`, a display on Linux, not SSH without one), the plugin exports Impeccable's `IMPECCABLE_QUESTION_FORCE=1` override for the session's shells. Commands stay as the agent wrote them. Once a page prints its URL, the plugin opens it in your browser and tells the agent so. The browser follows Impeccable's own order: `IMPECCABLE_BROWSER`, then `browser` in `.impeccable/config.local.json` or `config.json`, then `BROWSER`, then the system opener. A blocking `serve-question` and `serve-question --start --open` open the page themselves. A value of `IMPECCABLE_QUESTION_FORCE` you set yourself is left alone.
 
+### Impeccable account features
+
+A signed-in Impeccable account (`npx impeccable login`) adds background work that the launcher skips while `CI` is set: design health sync, critique and prototype history uploads, daily setup reports, and taste and switch sync. Because OMP sets `CI=true` in every agent shell command, that work does not run from OMP sessions, and the plugin has no Impeccable override for it as it does for decision pages. Set `PI_BASH_NO_CI=1` before starting OMP if you want it; that drops `CI=true` from every agent command, not only Impeccable's. Upstream connects its `impeccable` MCP server and Loop only to Claude Code and Codex (`impeccable loop connect`), so the plugin does not add them to OMP either.
 
 ## Attribution
 

@@ -1,7 +1,10 @@
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -12,6 +15,7 @@ import { describe, expect, onTestFinished, test, vi } from 'vitest';
 
 import impeccableExtension, {
   browserCommand,
+  ompAgent,
   parseCommandMetadata,
   summarizeLiveStatus,
 } from '../extensions/impeccable.ts';
@@ -505,6 +509,127 @@ Existing /audit command
     );
   });
 
+  test('design hook events carry the session transcript path when there is one', async () => {
+    const { project } = makeProject({
+      hook: `
+				let input = '';
+				process.stdin.on('data', (chunk) => (input += chunk));
+				process.stdin.on('end', () => {
+					const event = JSON.parse(input);
+					if (event.stop_hook_active) return;
+					console.log(JSON.stringify({ hookSpecificOutput: { additionalContext: \`\${event.hook_event_name}:\${event.session_id}:\${event.transcript_path ?? 'none'}\` } }));
+				});
+			`,
+    });
+    fs.mkdirSync(path.join(project, '.impeccable'));
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.local.json'),
+      JSON.stringify({ hook: { consent: 'accepted' } }),
+    );
+    const transcript = path.join(project, 'session.jsonl');
+    const edit = {
+      toolName: 'write',
+      isError: false,
+      input: { path: 'src/a.css' },
+      content: [{ type: 'text', text: 'written' }],
+    };
+
+    const withFile = loadExtension();
+    const ctx = makeContext(project, { sessionFile: transcript });
+    const edited = await withFile.emit<ToolTextResult>(
+      'tool_result',
+      edit,
+      ctx,
+    );
+    await withFile.emit('agent_end', { messages: [] }, ctx);
+
+    expect(edited?.content[1]?.text).toBe(
+      `PostToolUse:test-session:${transcript}`,
+    );
+    expect(withFile.messages[0]?.message.content).toBe(
+      `Stop:test-session:${transcript}`,
+    );
+
+    const withoutFile = loadExtension();
+    const bare = await withoutFile.emit<ToolTextResult>(
+      'tool_result',
+      edit,
+      makeContext(project),
+    );
+    expect(bare?.content[1]?.text).toBe('PostToolUse:test-session:none');
+  });
+
+  test('hooks on shows a note that supersedes the not-wired lines when the design hook is active', async () => {
+    const { project } = makeProject({
+      hooks: `console.log(${JSON.stringify(NOT_WIRED_OUTPUT)});\n`,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+
+    await runCommand(harness, 'hooks on', ctx);
+    expect(harness.messages.at(-1)?.message.content).toBe(NOT_WIRED_OUTPUT);
+
+    fs.mkdirSync(path.join(project, '.impeccable'));
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.local.json'),
+      JSON.stringify({ hook: { consent: 'accepted' } }),
+    );
+    await runCommand(harness, 'hooks on', ctx);
+
+    const shown = String(harness.messages.at(-1)?.message.content);
+    expect(shown.startsWith(NOT_WIRED_OUTPUT)).toBe(true);
+    expect(shown).toMatch(
+      /omp-impeccable runs this hook after edit and write tool calls and again when the agent finishes\. Ignore any "not wired" line above/,
+    );
+  });
+
+  test('agent-run hooks output gets the not-wired note only while the design hook is active', async () => {
+    const { project } = makeProject();
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+    const hooksResult = (command: string, text = NOT_WIRED_OUTPUT) => ({
+      toolName: 'bash',
+      isError: false,
+      input: { command },
+      content: [{ type: 'text', text }],
+    });
+    const status = hooksResult(
+      '.omp/skills/impeccable/scripts/impeccable hooks status',
+    );
+
+    expect(await harness.emit('tool_result', status, ctx)).toBeUndefined();
+
+    fs.mkdirSync(path.join(project, '.impeccable'));
+    fs.writeFileSync(
+      path.join(project, '.impeccable', 'config.local.json'),
+      JSON.stringify({ hook: { consent: 'accepted' } }),
+    );
+    const result = await harness.emit<ToolTextResult>(
+      'tool_result',
+      status,
+      ctx,
+    );
+
+    expect(result?.content).toHaveLength(2);
+    expect(result?.content[1]?.text).toMatch(
+      /overrides any "No design harness is wired" or "not wired in any harness" line above.*design hook is active in this session.*design hook will run/,
+    );
+    // Neither a wired status nor an unrelated command that prints the same words is annotated.
+    expect(
+      await harness.emit(
+        'tool_result',
+        hooksResult(
+          '.omp/skills/impeccable/scripts/impeccable hooks status',
+          '  wiring .claude: wired',
+        ),
+        ctx,
+      ),
+    ).toBeUndefined();
+    expect(
+      await harness.emit('tool_result', hooksResult('cat notes.txt'), ctx),
+    ).toBeUndefined();
+  });
+
   test('agent commands are queued as hidden extension messages', async () => {
     const { project, skillRoot } = makeProject();
     const harness = loadExtension();
@@ -597,10 +722,9 @@ Existing /audit command
       `Scripts: ${path.join(skillRoot, 'scripts')}`,
     );
     expect(
-      ctx.ui.notifications.find((note) => /live started/.test(note.message)),
+      ctx.ui.notifications.find((note) => /stop live or/.test(note.message)),
     ).toEqual({
-      message:
-        'Impeccable live started. Say stop live or /impeccable stop to stop.',
+      message: `Live has no page to open yet. The agent will find or start your dev server. ${stopHint}`,
       type: 'info',
     });
   });
@@ -664,6 +788,407 @@ Existing /audit command
     expect(liveMessage?.options?.deliverAs).toBe('aside');
   });
 
+  test.each<[string, string[]]>([
+    ['', ['--allow-missing-context', '--dev-url', '--auto-config']],
+    [
+      '--target apps/web',
+      [
+        '--allow-missing-context',
+        '--dev-url',
+        '--auto-config',
+        '--target',
+        'apps/web',
+      ],
+    ],
+    [
+      '--delivery=followUp --target=apps/web/index.html',
+      [
+        '--allow-missing-context',
+        '--dev-url',
+        '--auto-config',
+        '--target=apps/web/index.html',
+      ],
+    ],
+  ])('live boots with the three upstream flags and the target the user named (%j)', async (args, argv) => {
+    const { project } = await startLiveWith(
+      () => ({ ok: true, devUrl: pageUrl }),
+      args,
+    );
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(project, 'boot-argv.json'), 'utf8')),
+    ).toEqual(argv);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'live opens the page in the user browser only when no page is connected and the user can open one',
+    async () => {
+      desktopSession();
+      const opened = recordingBrowser();
+      const attempt = async (
+        clients: number | 'unreachable',
+        options: { hasUI?: boolean } = {},
+      ) => {
+        const helper = await fakeLiveHelper(clients);
+        const run = await startLiveWith(
+          () => ({
+            ok: true,
+            serverPort: helper.port,
+            serverToken: helper.token,
+            devUrl: pageUrl,
+          }),
+          '',
+          options,
+        );
+        return { ...run, helper };
+      };
+
+      const none = await attempt(0);
+      await waitFor(() => opened().length > 0, 'the browser was not started');
+      expect(none.helper.requests).toEqual(['/status?token=helper-token']);
+      expect(none.ctx.ui.notifications).toEqual([
+        {
+          message: `Opened ${pageUrl} in your browser. ${firstMoveHint} ${stopHint}`,
+          type: 'info',
+        },
+      ]);
+
+      const connected = await attempt(1);
+      const unseen = await attempt(0, { hasUI: false });
+      vi.stubEnv('CI', 'true');
+      const headless = await attempt(0);
+      vi.stubEnv('CI', '');
+      const down = await attempt('unreachable');
+
+      expect(opened()).toEqual([pageUrl]);
+      const told = `Open ${pageUrl} in your browser. ${firstMoveHint} ${stopHint}`;
+      for (const run of [connected, headless, down])
+        expect(run.ctx.ui.notifications).toEqual([
+          { message: told, type: 'info' },
+        ]);
+      // Without a UI the one message goes out as a displayed message instead of a notification.
+      expect(unseen.ctx.ui.notifications).toEqual([]);
+      expect(unseen.harness.messages.map((entry) => entry.message)).toEqual([
+        expect.objectContaining({ customType: 'impeccable', content: told }),
+      ]);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'live tells the user to open the page themselves when their browser will not start',
+    async () => {
+      desktopSession();
+      vi.stubEnv('IMPECCABLE_BROWSER', '/nonexistent/omp-impeccable-browser');
+      const helper = await fakeLiveHelper(0);
+
+      const { ctx } = await startLiveWith(() => ({
+        ok: true,
+        serverPort: helper.port,
+        serverToken: helper.token,
+        devUrl: pageUrl,
+      }));
+
+      expect(ctx.ui.notifications).toHaveLength(1);
+      const note = ctx.ui.notifications[0];
+      expect(note?.type).toBe('warning');
+      expect(note?.message).toMatch(
+        /^Could not open http:\/\/127\.0\.0\.1:5173\/ in your browser \(\/nonexistent\/omp-impeccable-browser: .*ENOENT.*\)\. Open it yourself\. First move/,
+      );
+      expect(note?.message).toMatch(
+        / Say stop live or \/impeccable stop to stop\.$/,
+      );
+    },
+  );
+
+  test('live tells the user the page URL, with the first move only before the project has run Live', async () => {
+    const sessions = (project: string) =>
+      path.join(project, 'apps', 'web', '.impeccable', 'live');
+    const boot = (project: string) => ({
+      ok: true,
+      devUrl: pageUrl,
+      roots: { sessionRoot: sessions(project) },
+    });
+    const journal = (project: string, name?: string) => {
+      fs.mkdirSync(path.join(sessions(project), 'sessions'), {
+        recursive: true,
+      });
+      if (name)
+        fs.writeFileSync(path.join(sessions(project), 'sessions', name), '{}');
+    };
+
+    const fresh = await startLiveWith(() => ({ ok: true, devUrl: pageUrl }));
+    // The boot itself creates the empty sessions directory; only a journal file proves an earlier session.
+    const booted = await startLiveWith(boot, '', {
+      before: (project) => journal(project),
+    });
+    const used = await startLiveWith(boot, '', {
+      before: (project) => journal(project, 'a1b2c3d4.jsonl'),
+    });
+
+    for (const run of [fresh, booted])
+      expect(run.ctx.ui.notifications).toEqual([
+        {
+          message: `Open ${pageUrl} in your browser. ${firstMoveHint} ${stopHint}`,
+          type: 'info',
+        },
+      ]);
+    expect(used.ctx.ui.notifications).toEqual([
+      { message: `Open ${pageUrl} in your browser. ${stopHint}`, type: 'info' },
+    ]);
+  });
+
+  test('live reports the page, a created config, missing context and config drift in one notification, in that order', async () => {
+    const messages = (run: { ctx: TestContext }) =>
+      run.ctx.ui.notifications.map((note) => note.message);
+    const page = `Open ${pageUrl} in your browser. ${firstMoveHint}`;
+
+    const created = await startLiveWith((project) => ({
+      ok: true,
+      devUrl: pageUrl,
+      configCreated: true,
+      liveConfigPath: path.join(project, '.impeccable', 'live', 'config.json'),
+      contextMissing: ['PRODUCT.md', 'DESIGN.md'],
+      configDrift: {
+        orphans: ['public/about.html'],
+        orphanCount: 1,
+        hint: driftHint,
+      },
+    }));
+    const designOnly = await startLiveWith(() => ({
+      ok: true,
+      devUrl: pageUrl,
+      contextMissing: ['DESIGN.md'],
+    }));
+    const complete = await startLiveWith(() => ({
+      ok: true,
+      devUrl: pageUrl,
+      contextMissing: [],
+    }));
+
+    expect(messages(created)).toEqual([
+      [
+        page,
+        `Added ${path.join('.impeccable', 'live', 'config.json')} to this project.`,
+        'PRODUCT.md and DESIGN.md are missing. Live works without them. After the session, run /impeccable init and /impeccable document.',
+        `${driftHint} Not covered: public/about.html.`,
+        stopHint,
+      ].join(' '),
+    ]);
+    expect(messages(designOnly)).toEqual([
+      [
+        page,
+        'DESIGN.md is missing. Live works without it. After the session, run /impeccable document.',
+        stopHint,
+      ].join(' '),
+    ]);
+    expect(messages(complete)).toEqual([[page, stopHint].join(' ')]);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'live opens a static page by its file URL, the target page when the user named one',
+    async () => {
+      desktopSession();
+      const opened = recordingBrowser();
+      const helper = await fakeLiveHelper(0);
+      const boot = (targetPath?: string) => (project: string) => ({
+        ok: true,
+        serverPort: helper.port,
+        serverToken: helper.token,
+        pageUrls: ['index.html', 'about.html'].map(
+          (file) => pathToFileURL(path.join(project, file)).href,
+        ),
+        ...(targetPath ? { targetPath } : {}),
+      });
+
+      await startLiveWith(boot());
+      await waitFor(() => opened().length === 1, 'the first page did not open');
+      await startLiveWith(boot('about.html'));
+      await waitFor(
+        () => opened().length === 2,
+        'the target page did not open',
+      );
+
+      expect(
+        opened().map((url) => path.basename(new URL(url).pathname)),
+      ).toEqual(['index.html', 'about.html']);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'live without a page URL keeps polling and asks the agent to find or start the dev server',
+    async () => {
+      desktopSession();
+      const opened = recordingBrowser();
+      const instructions =
+        'No dev server answered. If one is already running on another port or HTTPS, use its URL; otherwise start `npm run dev` in the background, wait until it prints its URL, and run this boot again to get devUrl.';
+      const { harness, ctx, project, skillRoot } = await startLiveWith(
+        () => ({
+          ok: true,
+          devUrl: null,
+          devCommand: 'npm run dev',
+          _instructions: instructions,
+        }),
+        '--target apps/web',
+      );
+      await waitFor(
+        () => fs.existsSync(path.join(project, 'poll-started')),
+        'the extension did not start its poll',
+      );
+
+      expect(opened()).toEqual([]);
+      expect(ctx.ui.notifications).toEqual([
+        {
+          message: `Live has no page to open yet. The agent will find or start your dev server. ${stopHint}`,
+          type: 'info',
+        },
+      ]);
+      expect(
+        ctx.ui.statuses.some(
+          (status) =>
+            status.key === 'impeccable' && status.value === '✦ impeccable live',
+        ),
+      ).toBe(true);
+      expect(harness.messages).toHaveLength(1);
+      const [{ message, options }] = harness.messages;
+      expect(message).toMatchObject({
+        customType: 'impeccable-command',
+        display: false,
+      });
+      expect(options).toEqual({ triggerTurn: true });
+      const prompt = message.content;
+      expect(prompt).toContain(`Boot instructions:\n${instructions}`);
+      expect(prompt).toContain("The project's dev command is `npm run dev`.");
+      expect(prompt).toContain(
+        `boot again with \`${path.join(skillRoot, 'scripts', 'impeccable')} live --allow-missing-context --dev-url --auto-config --target apps/web\``,
+      );
+      expect(prompt).toContain(
+        'tell the user its URL in one line, with the first move: click anything on the page, say what to change, press Go.',
+      );
+      expect(prompt).toMatch(/skip it\. omp-impeccable runs live-poll/);
+      expect(prompt).toMatch(/Never run live-poll yourself/);
+    },
+  );
+
+  test('a free-form live request goes to the agent with the user delivery, not to a guessed boot', async () => {
+    const event = { type: 'steer', id: 'evt-9', message: 'tighten it' };
+    const { harness, ctx, project, skillRoot } = await startLiveWith(
+      () => ({ ok: true, devUrl: pageUrl }),
+      'the pricing page --target apps/web --delivery=followUp',
+      {
+        idle: false,
+        poll: `console.log(${JSON.stringify(JSON.stringify(event))});\n`,
+      },
+    );
+
+    expect(fs.existsSync(path.join(project, 'boot-argv.json'))).toBe(false);
+    expect(harness.messages).toHaveLength(1);
+    const [{ message, options }] = harness.messages;
+    expect(message.display).toBe(false);
+    expect(options).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+    expect(message.content).toMatch(
+      /^Handle this Impeccable invocation in OMP: \/impeccable live the pricing page --target apps\/web\n/,
+    );
+    expect(message.content).toContain(path.join(skillRoot, 'SKILL.md'));
+    expect(message.content).toContain(
+      `${path.join(skillRoot, 'scripts', 'impeccable')} live --allow-missing-context --dev-url --auto-config`,
+    );
+    expect(message.content).toMatch(/Never run live-poll yourself/);
+
+    // The poll the agent asks for starts in the background and keeps the delivery the user chose.
+    const blocked = await harness.emit<ToolCallResult>(
+      'tool_call',
+      {
+        toolName: 'bash',
+        input: {
+          command: `${path.join(skillRoot, 'scripts', 'impeccable')} live-poll`,
+        },
+      },
+      ctx,
+    );
+    expect(blocked?.block).toBe(true);
+    await waitFor(
+      () =>
+        harness.messages.some(
+          (entry) => entry.message.customType === 'impeccable-live',
+        ),
+      'expected the live event to reach the agent',
+    );
+    expect(
+      harness.messages.find(
+        (entry) => entry.message.customType === 'impeccable-live',
+      )?.options?.deliverAs,
+    ).toBe('followUp');
+  });
+
+  test.each<[string, number, Record<string, unknown>]>([
+    [
+      'config_missing',
+      0,
+      {
+        ok: false,
+        error: 'config_missing',
+        path: '/app/.impeccable/live/config.json',
+      },
+    ],
+    ['no_page', 1, { ok: false, error: 'no_page', path: '/app' }],
+    [
+      'target_selection_required',
+      0,
+      {
+        ok: false,
+        error: 'target_selection_required',
+        targetCandidates: [{ name: 'web', path: 'apps/web' }],
+        hint: 'Ask the user which app Impeccable should use.',
+      },
+    ],
+  ])('a %s live boot goes to the agent with its output', async (error, exitCode, refusal) => {
+    const { harness, ctx, skillRoot } = await startLiveWith(() => refusal, '', {
+      exitCode,
+    });
+
+    expect(
+      harness.messages.map(({ message }) => [
+        message.customType,
+        message.display,
+      ]),
+    ).toEqual([
+      ['impeccable', true],
+      ['impeccable-command', false],
+    ]);
+    const [shown, handed] = harness.messages.map(
+      ({ message }) => message.content,
+    );
+    expect(shown).toMatch(/^Impeccable live needs setup:/);
+    expect(shown).toContain(`"error": "${error}"`);
+    expect(handed).toContain(
+      'Handle this Impeccable invocation in OMP: /impeccable live\n',
+    );
+    expect(handed).toContain(
+      `\`\`\`json\n${JSON.stringify(refusal, null, 2)}\n\`\`\``,
+    );
+    expect(handed).toContain(
+      `${path.join(skillRoot, 'scripts', 'impeccable')} live --allow-missing-context --dev-url --auto-config\``,
+    );
+    // Nothing is running yet: no live indicator.
+    expect(ctx.ui.statuses.some((status) => status.key === 'impeccable')).toBe(
+      false,
+    );
+  });
+
+  test('a live boot that crashed is shown to the user and not handed to the agent', async () => {
+    const { harness } = await startLiveWith(() => ({}), '', {
+      live: "console.error('engine missing');\nprocess.exitCode = 1;\n",
+    });
+
+    expect(harness.messages.map(({ message }) => message)).toEqual([
+      expect.objectContaining({
+        customType: 'impeccable',
+        display: true,
+        content: 'Impeccable live failed:\n\nengine missing\n',
+      }),
+    ]);
+  });
+
   test('quitting while the agent handles a live event asks first', async () => {
     const event: LiveEvent = {
       type: 'generate',
@@ -711,7 +1236,7 @@ Existing /audit command
     );
     onTestFinished(() => fs.rmSync(stopArgs, { force: true }));
     const { project } = makeProject({
-      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      live: 'console.log(JSON.stringify({ ok: true, devUrl: "http://127.0.0.1:5173/" }));\n',
       'live-poll': `setTimeout(() => console.log(JSON.stringify({ type: 'generate', id: 'late' })), 5000);\n`,
       'live-server': `
         import fs from 'node:fs';
@@ -1073,6 +1598,35 @@ Existing /audit command
     expect(summarizeLiveStatus('')).toBe('No Impeccable live status.');
     expect(summarizeLiveStatus('plain text')).toBe('plain text');
   });
+
+  test('subagents denied write tools in Claude stay read-only in OMP', () => {
+    const converted = ompAgent(
+      [
+        '---',
+        'name: impeccable-finish-reviewer',
+        'description: Reviews a finished build.',
+        'disallowedTools: Write, Edit, NotebookEdit',
+        'model: inherit',
+        'effort: high',
+        '---',
+        'Read `.claude/skills/impeccable/reference/craft-floor.md`.',
+        '',
+      ].join('\n'),
+    );
+    const frontmatter = converted.split('\n---\n')[0];
+    const tools = /^tools: (.*)$/m
+      .exec(frontmatter)?.[1]
+      .split(', ')
+      .filter(Boolean);
+    expect(tools).toContain('read');
+    expect(tools).toContain('bash');
+    expect(tools).not.toContain('write');
+    expect(tools).not.toContain('edit');
+    expect(tools).not.toContain('ast_edit');
+    expect(frontmatter).not.toMatch(/disallowedTools|^model:/m);
+    expect(frontmatter).toMatch(/^thinkingLevel: high$/m);
+    expect(converted).toContain('.omp/skills/impeccable/reference');
+  });
 });
 
 type Completion = {
@@ -1152,7 +1706,10 @@ type TestContext = {
   signal: AbortSignal | undefined;
   setTimeout: (fn: () => void, ms?: number) => NodeJS.Timeout;
   clearTimer: (timer: NodeJS.Timeout) => void;
-  sessionManager: { getSessionId: () => string };
+  sessionManager: {
+    getSessionId: () => string;
+    getSessionFile: () => string | undefined;
+  };
 };
 
 type TestUI = {
@@ -1299,10 +1856,12 @@ function makeContext(
     idle = true,
     hasUI = true,
     throwOnNotify,
+    sessionFile,
   }: {
     idle?: boolean;
     hasUI?: boolean;
     throwOnNotify?: (message: string) => boolean;
+    sessionFile?: string;
   } = {},
 ): TestContext {
   const notifications: TestUI['notifications'] = [];
@@ -1333,7 +1892,10 @@ function makeContext(
     signal: undefined,
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer),
-    sessionManager: { getSessionId: () => 'test-session' },
+    sessionManager: {
+      getSessionId: () => 'test-session',
+      getSessionFile: () => sessionFile,
+    },
   };
 }
 
@@ -1356,6 +1918,13 @@ function makeProject(verbs: Record<string, string> = {}): ProjectFixture {
   onTestFinished(() => fs.rmSync(project, { recursive: true, force: true }));
   return { project, skillRoot };
 }
+
+const NOT_WIRED_OUTPUT = [
+  'Design hook enabled for this project.',
+  'No design harness is wired. Install the skill for your harness, then run impeccable hooks on.',
+  '  wiring .claude: not wired (missing or stale entries)',
+  'enabled in config, not wired in any harness; repair with: impeccable hooks on',
+].join('\n');
 
 function readPackageJson(): PackageJson {
   return JSON.parse(
@@ -1407,4 +1976,105 @@ function recordingBrowser(): () => string[] {
   onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
   return () =>
     fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
+}
+
+const pageUrl = 'http://127.0.0.1:5173/';
+
+const firstMoveHint =
+  'First move: click anything on the page, say what to change, press Go. Pick is the crosshair in the bar at the bottom.';
+
+const stopHint = 'Say stop live or /impeccable stop to stop.';
+
+// The hint the boot's own `configDrift` carries.
+const driftHint =
+  '1 HTML file(s) exist but aren\'t in config.files. Consider adding them, or use a glob pattern like "public/**/*.html".';
+
+// A `live-poll` that marks that the extension started it, then waits like a poll with no events.
+const idlePoll = `
+  import fs from 'node:fs';
+  fs.writeFileSync('poll-started', '');
+  setInterval(() => {}, 1000);
+`;
+
+// A `live` verb that records its argv in the project and prints the boot output; a refusal can exit non-zero.
+function liveBoot(boot: unknown, exitCode = 0): string {
+  return `
+    import fs from 'node:fs';
+    fs.writeFileSync('boot-argv.json', JSON.stringify(process.argv.slice(2)));
+    console.log(${JSON.stringify(JSON.stringify(boot))});
+    process.exitCode = ${exitCode};
+  `;
+}
+
+// Runs `/impeccable live <args>` against a fake boot and an idle poll, and ends the session when the test does.
+async function startLiveWith(
+  boot: (project: string) => unknown,
+  args = '',
+  {
+    exitCode = 0,
+    hasUI = true,
+    idle = true,
+    live,
+    poll = idlePoll,
+    before,
+  }: {
+    exitCode?: number;
+    hasUI?: boolean;
+    idle?: boolean;
+    live?: string;
+    poll?: string;
+    before?: (project: string) => void;
+  } = {},
+) {
+  const { project, skillRoot } = makeProject();
+  const verbs = path.join(skillRoot, 'scripts', 'verbs');
+  fs.writeFileSync(
+    path.join(verbs, 'live.mjs'),
+    live ?? liveBoot(boot(project), exitCode),
+  );
+  fs.writeFileSync(path.join(verbs, 'live-poll.mjs'), poll);
+  before?.(project);
+  const harness = loadExtension();
+  const ctx = makeContext(project, { hasUI, idle });
+  onTestFinished(async () => {
+    await harness.emit('session_shutdown', {}, ctx);
+  });
+  await runCommand(harness, `live ${args}`.trimEnd(), ctx);
+  return { harness, ctx, project, skillRoot };
+}
+
+// Stands in for the Live helper's `GET /status`: reports `connectedClients` to the right token and refuses any other.
+// 'unreachable' hands back a port nothing listens on.
+async function fakeLiveHelper(connectedClients: number | 'unreachable') {
+  const token = 'helper-token';
+  const requests: string[] = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.url ?? '');
+    const authorized =
+      new URL(req.url ?? '/', 'http://helper').searchParams.get('token') ===
+      token;
+    res.writeHead(authorized ? 200 : 401, {
+      'content-type': 'application/json',
+    });
+    res.end(
+      JSON.stringify(
+        authorized
+          ? { status: 'ok', connectedClients }
+          : { error: 'Unauthorized' },
+      ),
+    );
+  });
+  const listening = Promise.withResolvers<void>();
+  server.listen(0, '127.0.0.1', listening.resolve);
+  await listening.promise;
+  const { port } = server.address() as AddressInfo;
+  const close = () => {
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    server.closeAllConnections();
+    return closed.promise;
+  };
+  if (connectedClients === 'unreachable') await close();
+  else onTestFinished(close);
+  return { port, token, requests };
 }

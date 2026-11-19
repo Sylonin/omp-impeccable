@@ -24,6 +24,7 @@ export const agentCommands = [
   'extract',
   'generate',
   'doctor',
+  'foundations',
 ] as const;
 
 export const extensionCommandDescriptions = new Map<string, string>([
@@ -57,6 +58,10 @@ export const fallbackAgentCommandDescriptions = new Map<string, string>([
   [
     'doctor',
     "Report and repair drift between this project's Impeccable artifacts and what the installed version reads.",
+  ],
+  [
+    'foundations',
+    'Walk through the product-foundations roadmap (secrets, 404 page, icons, CI and more), or fix one item with foundations <id>.',
   ],
   [
     'document',
@@ -146,7 +151,7 @@ export function helpText() {
 /impeccable <command> [target]
 /impeccable install
 /impeccable update
-/impeccable live [--delivery=steer|followUp|aside]
+/impeccable live [--target <path> | request] [--delivery=steer|followUp|aside]
 /impeccable live status
 /impeccable live stop
 /impeccable pin <upstream-command>
@@ -160,7 +165,7 @@ OMP commands:
 live, status, stop, install, update, pin, unpin, hooks, help
 
 Upstream Impeccable commands:
-init, teach, document, shape, craft, critique, audit, polish, bolder, quieter, distill, harden, clarify, onboard, animate, colorize, typeset, layout, delight, overdrive, adapt, optimize, extract, generate, doctor
+init, teach, document, shape, craft, critique, audit, polish, bolder, quieter, distill, harden, clarify, onboard, animate, colorize, typeset, layout, delight, overdrive, adapt, optimize, extract, generate, doctor, foundations
 
 This extension does not vendor Impeccable. It stages the upstream skill, stores the managed copy at .omp/skills/impeccable and its subagents at .omp/agents in your project, then wraps live mode so the poller runs in the background.`;
 }

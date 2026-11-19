@@ -11,8 +11,9 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -152,6 +153,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
         : event.content;
       return (
         withManualDetectorOverride(content, ctx.cwd) ??
+        withHooksNotWiredOverride(content, event.input.command, ctx.cwd) ??
         (opened ? { content } : undefined)
       );
     }
@@ -160,11 +162,16 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     if (!skillRoot) return;
     const notes: string[] = [];
     for (const file of changedFiles(ctx.cwd, event.input, event.details)) {
-      const note = await runDesignHook(skillRoot, ctx, {
-        hook_event_name: 'PostToolUse',
-        tool_name: event.toolName === 'edit' ? 'Edit' : 'Write',
-        tool_input: { file_path: file },
-      });
+      const note = await runDesignHook(
+        skillRoot,
+        ctx,
+        {
+          hook_event_name: 'PostToolUse',
+          tool_name: event.toolName === 'edit' ? 'Edit' : 'Write',
+          tool_input: { file_path: file },
+        },
+        EDIT_HOOK_TIMEOUT_MS,
+      );
       if (note) notes.push(note);
     }
     if (notes.length === 0) return;
@@ -180,10 +187,12 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     // Mirrors Claude's stop_hook_active: the turn a Stop pass started cannot start another.
     const stopHookActive = designHookContinuing;
     designHookContinuing = false;
-    const note = await runDesignHook(skillRoot, ctx, {
-      hook_event_name: 'Stop',
-      stop_hook_active: stopHookActive,
-    });
+    const note = await runDesignHook(
+      skillRoot,
+      ctx,
+      { hook_event_name: 'Stop', stop_hook_active: stopHookActive },
+      STOP_HOOK_TIMEOUT_MS,
+    );
     if (!note) return;
     designHookContinuing = true;
     pi.sendMessage(
@@ -396,28 +405,57 @@ async function startLive(
   live.delivery = readDelivery(tokens) ?? 'steer';
   live.cwd = ctx.cwd;
   live.skillRoot = skillRoot;
-  const boot = await runLauncher(
+
+  const target = targetArgs(tokens);
+  const words = freeFormWords(tokens);
+  // A request in prose ("the pricing page") names its target for the agent to infer, not for a guess here.
+  if (words.length > 0) {
+    showTransientStatus(ctx, 'live queued');
+    const request = ['live', ...words, ...target].join(' ');
+    sendExtensionPrompt(
+      pi,
+      ctx,
+      liveRequestPrompt(request, skillRoot),
+      'followUp',
+    );
+    return;
+  }
+
+  const bootArgs = [...liveBootFlags, ...target];
+  const run = await runLauncher(
     skillRoot,
     'live',
-    [],
+    bootArgs,
     ctx.cwd,
     undefined,
     25_000,
   );
-  if (boot.code !== 0)
+  const boot = parseJson(run.stdout) as LiveBoot | null;
+  // A refusal such as no_page exits non-zero yet names its reason in JSON for the agent.
+  if (run.code !== 0 && boot?.ok !== false)
     return display(
       pi,
-      `Impeccable live failed:\n\n${boot.stderr || boot.stdout}`,
+      `Impeccable live failed:\n\n${run.stderr || run.stdout}`,
     );
 
-  const parsed = parseJson(boot.stdout) as { ok?: boolean } | null;
-  if (!parsed?.ok) {
+  if (!boot?.ok) {
+    const output = boot ?? run.stdout;
     display(
       pi,
-      `Impeccable live needs setup:\n\n${JSON.stringify(parsed ?? boot.stdout, null, 2)}`,
+      `Impeccable live needs setup:\n\n${JSON.stringify(output, null, 2)}`,
     );
     showTransientStatus(ctx, 'live setup queued');
-    sendExtensionPrompt(pi, ctx, commandPrompt('live', skillRoot), 'followUp');
+    sendExtensionPrompt(
+      pi,
+      ctx,
+      liveSetupPrompt(
+        ['live', ...target].join(' '),
+        skillRoot,
+        bootArgs,
+        output,
+      ),
+      'followUp',
+    );
     return;
   }
 
@@ -425,11 +463,245 @@ async function startLive(
   live.pausedFor = undefined;
   clearTransientStatus(ctx);
   startIndicator(live, ctx);
-  ctx.ui.notify(
-    'Impeccable live started. Say stop live or /impeccable stop to stop.',
-    'info',
-  );
   startPoll(pi, live, ctx);
+  await presentLivePage(pi, live, ctx, skillRoot, boot, bootArgs);
+}
+
+// Upstream reference/live.md: every boot passes all three flags, plus --target for a monorepo app.
+const liveBootFlags = ['--allow-missing-context', '--dev-url', '--auto-config'];
+
+const firstMove = 'click anything on the page, say what to change, press Go';
+
+// live.md has the agent run the poll; here the extension does, so the agent must not.
+const liveLoopNote =
+  'omp-impeccable runs live-poll in the background and sends each browser event to you as a hidden message. Never run live-poll yourself: answer events with the impeccable_live_reply tool and finish carbonize cleanup with impeccable_live_complete.';
+
+const contextCommands: Record<string, string> = {
+  'PRODUCT.md': '/impeccable init',
+  'DESIGN.md': '/impeccable document',
+};
+
+// `--target <path>` or `--target=<path>` as typed; a bare `--target` reaches the boot, which names the missing value.
+function targetArgs(tokens: string[]) {
+  const inline = tokens.find((token) => token.startsWith('--target='));
+  if (inline) return [inline];
+  const index = tokens.indexOf('--target');
+  if (index < 0) return [];
+  const value = tokens[index + 1];
+  return value && !value.startsWith('-') ? ['--target', value] : ['--target'];
+}
+
+// The words that are neither flags nor a flag's value: the request's own prose.
+function freeFormWords(tokens: string[]) {
+  const words: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === '--delivery' || token === '--target') index += 1;
+    else if (!token.startsWith('-')) words.push(token);
+  }
+  return words;
+}
+
+function shellWord(word: string) {
+  return /^[\w@%+=:,./-]+$/.test(word)
+    ? word
+    : `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+function liveBootCommand(skillRoot: string, args: string[]) {
+  return [join(skillRoot, 'scripts', 'impeccable'), 'live', ...args]
+    .map(shellWord)
+    .join(' ');
+}
+
+function liveRequestPrompt(request: string, skillRoot: string) {
+  return [
+    commandPrompt(request, skillRoot),
+    `Boot Live as live.md says: \`${liveBootCommand(skillRoot, liveBootFlags)}\`, plus \`--target <path>\` with the concrete path when the request names or implies a file, route, or app.`,
+    liveLoopNote,
+  ].join('\n\n');
+}
+
+function liveSetupPrompt(
+  request: string,
+  skillRoot: string,
+  bootArgs: string[],
+  output: unknown,
+) {
+  return [
+    commandPrompt(request, skillRoot),
+    `omp-impeccable ran \`${liveBootCommand(skillRoot, bootArgs)}\` and the boot did not finish. Its output:\n\`\`\`json\n${JSON.stringify(output, null, 2)}\n\`\`\``,
+    'live.md covers these cases (the contract, Start, and live-setup.md where it points there). Resolve it as it says, then boot again with the same command, adding --target <path> when the output asks which app to use.',
+    liveLoopNote,
+  ].join('\n\n');
+}
+
+function liveNoPagePrompt(
+  skillRoot: string,
+  boot: LiveBoot,
+  bootArgs: string[],
+  firstSession: boolean,
+) {
+  const bootCommand = liveBootCommand(skillRoot, bootArgs);
+  const firstMoveNote = firstSession
+    ? `, with the first move: ${firstMove}`
+    : '';
+  return [
+    'Impeccable live is running in the background, but its boot found no page URL to open.',
+    pathContract(skillRoot),
+    typeof boot._instructions === 'string'
+      ? `Boot instructions:\n${boot._instructions}`
+      : '',
+    boot.devCommand
+      ? `The project's dev command is \`${boot.devCommand}\`.`
+      : '',
+    `Find the app's URL (check the terminal output, the dev config's port, and any open tab) and start the dev command in the background only when nothing is running. If no URL can be found, ask the user once. Once the app answers, boot again with \`${bootCommand}\`, then tell the user its URL in one line${firstMoveNote}.`,
+    `The boot instructions end with a poll loop: skip it. ${liveLoopNote}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+// Tells the user what the boot did and where the page is, opening it for them when no page is connected yet.
+// OMP's TUI paints only the last notification, so everything goes out as one.
+async function presentLivePage(
+  pi: ExtensionAPI,
+  live: LiveState,
+  ctx: ExtensionContext,
+  skillRoot: string,
+  boot: LiveBoot,
+  bootArgs: string[],
+) {
+  const firstSession = !hasLiveSessions(boot, ctx.cwd);
+  const url = livePageUrl(boot, ctx.cwd);
+  let page =
+    'Live has no page to open yet. The agent will find or start your dev server.';
+  let type: 'info' | 'warning' = 'info';
+  if (url) {
+    // Only a page nobody has open yet, and only for a user who can see a browser.
+    const clients = userCanOpenBrowser(ctx.hasUI)
+      ? await connectedClients(boot)
+      : undefined;
+    if (!live.active) return;
+    const launch =
+      clients === 0
+        ? await launchBrowser(url, boot.projectRoot ?? projectRoot(ctx.cwd))
+        : undefined;
+    if (launch?.error) type = 'warning';
+    page = launch?.error
+      ? `Could not open ${url} in your browser (${launch.program}: ${launch.error}). Open it yourself.`
+      : launch
+        ? `Opened ${url} in your browser.`
+        : `Open ${url} in your browser.`;
+    if (firstSession)
+      page += ` First move: ${firstMove}. Pick is the crosshair in the bar at the bottom.`;
+  }
+
+  const config =
+    typeof boot.liveConfigPath === 'string'
+      ? relative(ctx.cwd, boot.liveConfigPath)
+      : '.impeccable/live/config.json';
+  const notes = [
+    page,
+    boot.configCreated === true && `Added ${config} to this project.`,
+    missingContextNote(boot.contextMissing),
+    configDriftNote(boot),
+    'Say stop live or /impeccable stop to stop.',
+  ];
+  notifyOrDisplay(pi, ctx, notes.filter(Boolean).join(' '), type);
+
+  if (!url)
+    sendExtensionPrompt(
+      pi,
+      ctx,
+      liveNoPagePrompt(skillRoot, boot, bootArgs, firstSession),
+      'followUp',
+    );
+}
+
+function missingContextNote(missing: unknown) {
+  const names = Array.isArray(missing)
+    ? missing.filter(
+        (name): name is string =>
+          typeof name === 'string' && Object.hasOwn(contextCommands, name),
+      )
+    : [];
+  if (names.length === 0) return undefined;
+  const [is, them] = names.length > 1 ? ['are', 'them'] : ['is', 'it'];
+  const commands = names.map((name) => contextCommands[name]).join(' and ');
+  return `${names.join(' and ')} ${is} missing. Live works without ${them}. After the session, run ${commands}.`;
+}
+
+const toldConfigDrift = new Set<string>();
+
+// live.md: tell the user once which HTML files the config leaves out; never edit the config for them.
+function configDriftNote(boot: LiveBoot) {
+  const drift = boot.configDrift;
+  if (!drift || typeof drift.hint !== 'string') return undefined;
+  const key = boot.liveConfigPath ?? '';
+  if (toldConfigDrift.has(key)) return undefined;
+  toldConfigDrift.add(key);
+  const files = Array.isArray(drift.orphans)
+    ? drift.orphans.filter((file) => typeof file === 'string')
+    : [];
+  return files.length > 0
+    ? `${drift.hint} Not covered: ${files.join(', ')}.`
+    : drift.hint;
+}
+
+// The running dev server's origin, else the static page's file URL (the target's own when it names one).
+function livePageUrl(boot: LiveBoot, cwd: string) {
+  const isPage = (url: unknown): url is string =>
+    typeof url === 'string' && /^(?:https?|file):\/\//.test(url);
+  if (isPage(boot.devUrl)) return boot.devUrl;
+  const pages = Array.isArray(boot.pageUrls)
+    ? boot.pageUrls.filter(isPage)
+    : [];
+  const target =
+    typeof boot.targetPath === 'string' ? resolve(cwd, boot.targetPath) : '';
+  return pages.find((url) => fileUrlPath(url) === target) ?? pages[0];
+}
+
+function fileUrlPath(url: string) {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return undefined;
+  }
+}
+
+// The boot only creates the empty sessions directory: a journal file there means Live already ran in this project.
+function hasLiveSessions(boot: LiveBoot, cwd: string) {
+  const liveDir =
+    typeof boot.roots?.sessionRoot === 'string'
+      ? boot.roots.sessionRoot
+      : join(boot.projectRoot ?? projectRoot(cwd), '.impeccable', 'live');
+  try {
+    return readdirSync(join(liveDir, 'sessions')).some((name) =>
+      name.endsWith('.jsonl'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+// How many browser pages the helper has connected (`GET /status`); undefined when it cannot say.
+async function connectedClients(boot: LiveBoot) {
+  const { serverPort: port, serverToken: token } = boot;
+  if (typeof port !== 'number' || typeof token !== 'string') return undefined;
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${port}/status?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(2_000) },
+    );
+    if (!response.ok) return undefined;
+    const status = (await response.json()) as { connectedClients?: unknown };
+    return typeof status.connectedClients === 'number'
+      ? status.connectedClients
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function stopLive(
@@ -508,6 +780,7 @@ async function installOrUpdate(
   action: 'install' | 'update',
 ) {
   showTransientStatus(ctx, `${action} started`);
+  const previousVersion = skillVersion(projectOmpSkillRoot(ctx.cwd));
   const installed = await installProjectOmpSkill(ctx.cwd);
 
   clearTransientStatus(ctx);
@@ -522,7 +795,43 @@ async function installOrUpdate(
         : `.omp/skills/impeccable was not found after staging the upstream install`;
     return notifyOrDisplay(pi, ctx, message, 'error');
   }
-  notifyOrDisplay(pi, ctx, `Impeccable ${action} complete.`, 'info');
+  const done = `Impeccable ${action} complete.`;
+  const report =
+    action === 'update'
+      ? await doctorReport(
+          ctx,
+          installed.skillRoot,
+          skillVersion(installed.skillRoot) !== previousVersion,
+        )
+      : undefined;
+  // One message: a notification right before a displayed message is never painted.
+  if (report) display(pi, `${done}\n\n${report}`);
+  else notifyOrDisplay(pi, ctx, done, 'info');
+}
+
+// Upstream `impeccable update` ends with the doctor report: the new skill may read the project's files
+// differently from the version that wrote them. A report only; the fixes are `/impeccable doctor`'s.
+async function doctorReport(
+  ctx: ExtensionContext,
+  skillRoot: string,
+  updated: boolean,
+) {
+  const doctor = await runLauncher(skillRoot, 'doctor', [], ctx.cwd);
+  const report = doctor.stdout.trim();
+  if (doctor.code !== 0 || !report) return undefined;
+  const next = updated
+    ? "\n\nNext step: run /impeccable doctor. It checks this project's setup against the version you just installed and offers the fixes."
+    : '';
+  return `${report}${next}`;
+}
+
+function skillVersion(skillRoot: string) {
+  try {
+    const skill = readFileSync(join(skillRoot, 'SKILL.md'), 'utf8');
+    return /^version:\s*(\S+)\s*$/m.exec(skill)?.[1];
+  } catch {
+    return undefined;
+  }
 }
 
 async function ensureSkill(pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -761,6 +1070,15 @@ function unpinCommand(
   );
 }
 
+// Same budgets as upstream's manifests and Hermes plugin: 5 s per edit, 30 s for the Stop deep pass.
+const EDIT_HOOK_TIMEOUT_MS = 5_000;
+const STOP_HOOK_TIMEOUT_MS = 30_000;
+
+// The summary lines `impeccable hooks on|status` print when no harness manifest is wired.
+const HOOKS_NOT_WIRED = /No design harness is wired|not wired in any harness/;
+const HOOKS_NOT_WIRED_NOTE =
+  'omp-impeccable overrides any "No design harness is wired" or "not wired in any harness" line above. Upstream Impeccable checks only harness manifests and cannot see OMP, but the omp-impeccable design hook is active in this session: it runs after edit and write tool calls and again when you finish. You may tell the user the design hook will run.';
+
 async function runHooksCommand(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -778,7 +1096,7 @@ async function runHooksCommand(
       'error',
     );
   const note = designHookActive(ctx.cwd)
-    ? '\n\nomp-impeccable runs this hook after edit and write tool calls and again when the agent finishes.'
+    ? '\n\nomp-impeccable runs this hook after edit and write tool calls and again when the agent finishes. Ignore any "not wired" line above: upstream checks only harness manifests and cannot see OMP.'
     : '';
   display(pi, `${output}${note}`);
 }
@@ -829,17 +1147,21 @@ async function runDesignHook(
   skillRoot: string,
   ctx: ExtensionContext,
   event: Record<string, unknown>,
+  timeoutMs: number,
 ) {
+  // Stop discovery dates the session from a UUIDv7 session id, else the transcript file's birth time.
+  const transcriptPath = ctx.sessionManager.getSessionFile();
   const result = await runLauncher(
     skillRoot,
     'hook',
     [],
     ctx.cwd,
     undefined,
-    30_000,
+    timeoutMs,
     JSON.stringify({
       ...event,
       session_id: ctx.sessionManager.getSessionId(),
+      ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       cwd: ctx.cwd,
     }),
   );
@@ -1145,8 +1467,9 @@ function openServedPage(
   return opened;
 }
 
-async function openPage(url: string, ctx: ExtensionContext) {
-  const [program, args] = browserCommand(url, projectRoot(ctx.cwd));
+// Starts the user's browser on the page; `error` says why it would not start.
+async function launchBrowser(url: string, root: string) {
+  const [program, args] = browserCommand(url, root);
   const { promise: spawned, resolve: done } = Promise.withResolvers<
     string | undefined
   >();
@@ -1156,7 +1479,11 @@ async function openPage(url: string, ctx: ExtensionContext) {
     done(undefined);
   });
   child.once('error', (err) => done(err.message));
-  const error = await spawned;
+  return { program, error: await spawned };
+}
+
+async function openPage(url: string, ctx: ExtensionContext) {
+  const { program, error } = await launchBrowser(url, projectRoot(ctx.cwd));
   if (error) {
     ctx.ui.notify(
       `Open the Impeccable page in your browser: ${url} (${program}: ${error})`,
@@ -1220,6 +1547,27 @@ function withManualDetectorOverride(
         type: 'text' as const,
         text: 'omp-impeccable overrides the MANUAL_DETECTOR_REQUIRED line above. Upstream Impeccable cannot see OMP hooks, but the omp-impeccable design hook is active in this session: it runs after edit and write tool calls and when you finish. Skip that manual detector run.',
       },
+    ],
+  };
+}
+
+// Upstream `hooks on` and `hooks status` read only harness manifests, so in OMP they report the hook as
+// not wired and `reference/hooks.md` tells the agent not to claim it runs.
+function withHooksNotWiredOverride(
+  content: ToolResultEvent['content'],
+  command: unknown,
+  cwd: string,
+) {
+  if (typeof command !== 'string' || !/\bhooks\b/.test(command))
+    return undefined;
+  const notWired = content.some(
+    (block) => block.type === 'text' && HOOKS_NOT_WIRED.test(block.text),
+  );
+  if (!notWired || !designHookActive(cwd)) return undefined;
+  return {
+    content: [
+      ...content,
+      { type: 'text' as const, text: HOOKS_NOT_WIRED_NOTE },
     ],
   };
 }
@@ -1589,19 +1937,83 @@ function replaceProjectOmpAgents(source: string, cwd: string) {
   }
 }
 
-// OMP reads Claude agent frontmatter except `model: inherit` (omitting model inherits) and `effort`.
-function ompAgent(claudeAgent: string) {
+// OMP reads Claude agent frontmatter except `model: inherit` (omitting model inherits), `effort`, and
+// `disallowedTools`: OMP has only a `tools` allowlist, beside which extension and MCP tools stay available.
+export function ompAgent(claudeAgent: string) {
   return rewriteSkillPaths(claudeAgent).replace(
     /^---\n([\s\S]*?)\n---\n/,
     (_match, frontmatter: string) => {
-      const lines = frontmatter
-        .split('\n')
-        .filter((line) => !/^model:\s*inherit\s*$/.test(line))
-        .map((line) => line.replace(/^effort:/, 'thinkingLevel:'));
+      const source = frontmatter.split('\n');
+      const lines: string[] = [];
+      let disallowed: string[] | undefined;
+      for (let index = 0; index < source.length; index++) {
+        const line = source[index];
+        if (/^model:\s*inherit\s*$/.test(line)) continue;
+        const field = /^(?:disallowedTools|disallowed-tools):\s*(.*)$/.exec(
+          line,
+        );
+        if (!field) {
+          lines.push(line.replace(/^effort:/, 'thinkingLevel:'));
+          continue;
+        }
+        disallowed = field[1].split(',');
+        while (/^\s+-\s/.test(source[index + 1] ?? ''))
+          disallowed.push(source[++index].replace(/^\s+-\s*/, ''));
+      }
+      if (disallowed) allowTools(lines, disallowed);
       return `---\n${[...lines, 'managed-by: omp-impeccable'].join('\n')}\n---\n`;
     },
   );
 }
+
+// Rewrites (or adds) the `tools` line to the allowed tools minus the OMP tools matching Claude's `disallowed`.
+function allowTools(lines: string[], disallowed: string[]) {
+  const denied = new Set(
+    disallowed.flatMap((tool) => {
+      const name = tool.trim().toLowerCase();
+      return name ? (claudeToolsInOmp[name] ?? [name]) : [];
+    }),
+  );
+  const index = lines.findIndex((line) => /^tools:/.test(line));
+  const allowed =
+    index >= 0
+      ? lines[index]
+          .replace(/^tools:/, '')
+          .split(',')
+          .map((tool) => tool.trim().toLowerCase())
+          .filter(Boolean)
+      : ompSubagentTools;
+  const line = `tools: ${allowed.filter((tool) => !denied.has(tool)).join(', ')}`;
+  if (index >= 0) lines[index] = line;
+  else lines.push(line);
+}
+
+// The built-in tools a Claude Code subagent gets by default, by their OMP names.
+const ompSubagentTools = [
+  'read',
+  'bash',
+  'edit',
+  'write',
+  'ast_edit',
+  'grep',
+  'glob',
+  'find',
+  'lsp',
+  'eval',
+  'debug',
+  'web_search',
+  'todo',
+];
+
+const claudeToolsInOmp: Record<string, string[]> = {
+  edit: ['edit', 'ast_edit'],
+  multiedit: ['edit', 'ast_edit'],
+  notebookedit: ['edit'],
+  websearch: ['web_search'],
+  // OMP's read also fetches URLs; denying WebFetch must not deny file reads.
+  webfetch: [],
+  todowrite: ['todo'],
+};
 
 const textSkillExtensions = new Set([
   '.js',
@@ -1794,6 +2206,24 @@ type LiveEventData = {
   _acceptResult?: { carbonize?: boolean };
   _completionAck?: { ok?: boolean };
   [key: string]: unknown;
+};
+
+// What `impeccable live` prints, as far as the extension reads it.
+type LiveBoot = {
+  ok?: boolean;
+  serverPort?: number;
+  serverToken?: string;
+  projectRoot?: string;
+  targetPath?: string | null;
+  liveConfigPath?: string;
+  roots?: { sessionRoot?: string | null };
+  configCreated?: boolean;
+  devUrl?: string | null;
+  pageUrls?: string[];
+  devCommand?: string;
+  contextMissing?: string[];
+  configDrift?: { orphans?: unknown[]; hint?: unknown } | null;
+  _instructions?: string;
 };
 
 // Upstream crates/live/src/live_poll.rs EVENT_TYPES_NEEDING_AGENT_REPLY.
