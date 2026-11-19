@@ -23,3 +23,9 @@ minimumReleaseAgeExclude:
   - '@oh-my-pi/pi-utils@19.0.0'
   - '@oh-my-pi/pi-wire@19.0.0'
   - '@oh-my-pi/snapcompact@19.0.0'
+  - '@impeccable/cli-darwin-arm64@0.1.27'
+  - '@impeccable/cli-darwin-x64@0.1.27'
+  - '@impeccable/cli-linux-arm64@0.1.27'
+  - '@impeccable/cli-linux-x64@0.1.27'
+  - '@impeccable/cli-windows-x64@0.1.27'
+  - impeccable@4.10.0
