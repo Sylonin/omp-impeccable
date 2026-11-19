@@ -117,7 +117,7 @@ A signed-in Impeccable account (`npx impeccable login`) adds background work tha
 
 ## Attribution
 
-This plugin is an OMP-native fork of [`pi-impeccable`](https://github.com/jordi9/pi-impeccable) by jordi9. The upstream Impeccable package and skill are created by [Paul Bakaus](https://github.com/pbakaus) and live at [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable). This repository is only the OMP adapter; it does not vendor Impeccable.
+This plugin continues [`omp-impeccable`](https://github.com/jenkei/omp-impeccable) by jenkei, the OMP-native port of [`pi-impeccable`](https://github.com/jordi9/pi-impeccable) by jordi9. The upstream Impeccable package and skill are created by [Paul Bakaus](https://github.com/pbakaus) and live at [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable). This repository is only the OMP adapter; it does not vendor Impeccable.
 
 ## Release
 

@@ -5,7 +5,7 @@ description: "Use when the omp-impeccable fork breaks after upstream Impeccable 
 
 # omp-impeccable upstream sync audit
 
-Fork: `Sylonin/omp-impeccable` at `~/Proj/p/omp-impeccable`, linked into omp with `omp plugin link`. Run pnpm through a corepack shim: `mkdir -p /tmp/pnpm-shim && corepack enable --install-directory /tmp/pnpm-shim pnpm`, then `PATH=/tmp/pnpm-shim:$PATH pnpm release:check`.
+Repo: `Sylonin/omp-impeccable` (standalone, detached from `jenkei/omp-impeccable`) at `~/Proj/p/omp-impeccable`, linked into omp with `omp plugin link`. Run pnpm through a corepack shim: `mkdir -p /tmp/pnpm-shim && corepack enable --install-directory /tmp/pnpm-shim pnpm`, then `PATH=/tmp/pnpm-shim:$PATH pnpm release:check`.
 
 ## 1. Find what upstream changed
 - Commits since the last sync: a blob-filtered clone (`git clone --filter=blob:none https://github.com/pbakaus/impeccable`) and `git diff cli-v<old> cli-v<new> -- .omp .claude/agents skill/agents skill/SKILL.src.md skill/reference/{live,hooks,doctor}.md crates/hook crates/live crates/context docs/HARNESSES.md`. Releases are tagged `cli-v*`, `skill-v*` and `engine-v*`; the npm version is the `cli-v` tag.
