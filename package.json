@@ -6,12 +6,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jenkei/omp-impeccable.git"
+    "url": "git+https://github.com/Sylonin/omp-impeccable.git"
   },
   "bugs": {
-    "url": "https://github.com/jenkei/omp-impeccable/issues"
+    "url": "https://github.com/Sylonin/omp-impeccable/issues"
   },
-  "homepage": "https://github.com/jenkei/omp-impeccable#readme",
+  "homepage": "https://github.com/Sylonin/omp-impeccable#readme",
   "keywords": [
     "omp-plugin",
     "omp",

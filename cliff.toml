@@ -12,7 +12,7 @@ Initial public release of `omp-impeccable`.
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | upper_first }}
 {% for commit in commits %}
-- {{ commit.message | split(pat="\n") | first | trim }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/jenkei/omp-impeccable/commit/{{ commit.id }}))\
+- {{ commit.message | split(pat="\n") | first | trim }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/Sylonin/omp-impeccable/commit/{{ commit.id }}))\
 {% endfor %}
 {% endfor %}
 """
