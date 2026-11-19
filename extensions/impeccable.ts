@@ -1406,6 +1406,7 @@ function notifyOrDisplay(
   else display(pi, content);
 }
 
+// Help, usage and command output are for the user; omp 19.0.0+ keeps them out of the model's context.
 function display(pi: ExtensionAPI, content: string) {
   pi.sendMessage({
     customType: 'impeccable',
@@ -1413,6 +1414,7 @@ function display(pi: ExtensionAPI, content: string) {
     display: true,
     details: undefined,
     attribution: undefined,
+    excludeFromContext: true,
   });
 }
 
