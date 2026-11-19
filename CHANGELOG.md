@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Type-check against `@oh-my-pi/pi-coding-agent` 18.18.7.
+- Type-check against `@oh-my-pi/pi-coding-agent` 19.0.0.
 - Ask before quitting OMP while the agent is still handling a live event, since quitting then can leave its unfinished edits in source files. Needs OMP 18.18.7 or later; older versions quit without asking.
 - Run the bundled `impeccable` CLI (`/impeccable install`, `/impeccable update`) under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
 - Run live mode through the skill's `scripts/impeccable <verb>` launcher (`live`, `live-poll`, `live-status`, `live-server`, `live-complete`). Current Impeccable skills no longer ship the `live*.mjs` scripts. Projects with an older installed skill must run `/impeccable update` first.
