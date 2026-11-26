@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Type-check against `@oh-my-pi/pi-coding-agent` 19.0.0.
+- Type-check against `@oh-my-pi/pi-coding-agent` 19.2.1.
 - Keep `/impeccable` help, usage, hooks and poll-failure output out of the model's context. The user still sees it in the transcript. Needs OMP 19.0.0 or later; older versions also send it to the model.
 - Ask before quitting OMP while the agent is still handling a live event, since quitting then can leave its unfinished edits in source files. Needs OMP 18.18.7 or later; older versions quit without asking.
 - Run the bundled `impeccable` CLI (`/impeccable install`, `/impeccable update`) under compiled `omp` binaries by setting `BUN_BE_BUN=1` for children spawned from `process.execPath`.
