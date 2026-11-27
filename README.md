@@ -20,14 +20,14 @@ That means you can keep chatting with the agent while Impeccable watches the bro
 
 ### Compared with upstream's own OMP support
 
-Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skill into `.omp/skills/impeccable` or `~/.omp/agent/skills`. That install is the same skill this plugin installs. As of 4.10, upstream still leaves the rest out for OMP:
+Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skill into `.omp/skills/impeccable` or `~/.omp/agent/skills`. That install is the same skill this plugin installs. As of 4.11, upstream still leaves the rest out for OMP:
 
 | | Upstream `--providers=omp` | omp-impeccable |
 |---|---|---|
 | Entry point | `/skill:impeccable <request>` | `/impeccable <request>` with command completions, `/impeccable pin` shortcuts |
 | Subagents | None: OMP does not read `.claude/agents`, so the skill falls back to in-thread passes | Shipped subagents (finish reviewer, motion reviewer, documenter, asset producer, manual edit applier) converted into `.omp/agents` |
 | Design hook | None; the skill asks for one manual detector run instead, and `hooks status` reports no wired harness | Runs after `edit`/`write` and when the agent finishes |
-| Live mode | The agent runs `live-poll` as a foreground loop | Background poll; events arrive as hidden messages while OMP stays usable |
+| Live mode | The agent runs `live-poll` as a foreground loop and pauses it after three empty 10-minute polls | Background poll that keeps waiting without spending agent turns; events arrive as hidden messages while OMP stays usable |
 | Decision page and component review | `serve-question` and `component-review serve` refuse with "no browser", because OMP sets `CI=true` in its shell | Served, and opened in your browser |
 
 ## Install

@@ -36,7 +36,7 @@
     ]
   },
   "dependencies": {
-    "impeccable": "^4.10.0"
+    "impeccable": "^4.11.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",

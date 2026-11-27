@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       impeccable:
-        specifier: ^4.10.0
-        version: 4.10.0
+        specifier: ^4.11.1
+        version: 4.11.1
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.0
@@ -113,32 +113,32 @@ packages:
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
 
-  '@impeccable/cli-darwin-arm64@0.1.27':
-    resolution: {integrity: sha512-RUnJwxqORDpPf6ctQcAoij2bTXUD26LMb8+mPj/Bw5l1WQBfyCnAH0EeSC3JgmEW83IoKJ2t6WmAxckgevENIQ==}
+  '@impeccable/cli-darwin-arm64@0.1.31':
+    resolution: {integrity: sha512-nQkINgvZvyoTsnbU7SQQIZYRmcuEX76YoVz3Chr+wwe+X7Wu+70RLruk8Ej8bk3HUPTq2VQbZyDs+Z+Eq4/m+A==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@impeccable/cli-darwin-x64@0.1.27':
-    resolution: {integrity: sha512-OCcyITqGiiAwJhbCavjJiTFN6FWQhq2d7BOgFrjRn4QmRZcyDAUmgDSE51oBXsraXh1QN3KPlevwNRmgqJ+Q9w==}
+  '@impeccable/cli-darwin-x64@0.1.31':
+    resolution: {integrity: sha512-K0k8UAtqWtIgVq3CFRFO3zXJZ9BT/JiXy+372D84p7hwQg1qrop1c2rnNTgGja+Ax9r8KpRTOSIMZY+u3TtYmw==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@impeccable/cli-linux-arm64@0.1.27':
-    resolution: {integrity: sha512-mUomPpnEWAC9HGWIjEM7A9AHlAh8fkDkmqpghq4BsICVquQ2Z9a8haTFiQz5d/Xy4j0MRYGhcLj5RC8rYLPaog==}
+  '@impeccable/cli-linux-arm64@0.1.31':
+    resolution: {integrity: sha512-C4n+n1GGbotWrnXKQ9TtjWjWj4XalUtcmsIZKCnS5m9kzz7rIZFMEZsrlxqMbqeaWl3n9FeR/WdYT5Ajm0SU9g==}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@impeccable/cli-linux-x64@0.1.27':
-    resolution: {integrity: sha512-gvJUVnuW11/FILcqeLZ1QpGssXHd4OdaExQCi9l/VM0egIN4yQciLeI7WSlDCwd6NC9TCrTcLAfbAkJadYCgZg==}
+  '@impeccable/cli-linux-x64@0.1.31':
+    resolution: {integrity: sha512-/c45wcM4EG2WUSfS9d7jhHF4k/yrL3sjxj0PZAGvKalj2YTz6R10tDM4JIft74XLr9lX1DWOSEGHtJXsfawxuQ==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@impeccable/cli-windows-x64@0.1.27':
-    resolution: {integrity: sha512-i1vn/sq00PEQ/lhkiF6OsG0w5xym9F7qv/p2vS1uy3bDxavt2DdJq46i/m7/DNqrsKP7PdjiaU2kwmqBcEN1jQ==}
+  '@impeccable/cli-windows-x64@0.1.31':
+    resolution: {integrity: sha512-97DvZHzlxE+68m/68tkKs74ceIl78RjMq2XJXFWLP8Y6Fy0MdHzIW5RB/SvyThdgUrKgeL/y2WRKJ1EBsvofhw==}
     cpu: [x64]
     os: [win32]
     hasBin: true
@@ -586,8 +586,8 @@ packages:
     resolution: {integrity: sha512-XjH1AECxf0giL2V1aU8vKyRR2ppRUb5c0EvT7zuJTokQ74bNo52zOtghqdWIqrhUD79fo3x0WfKZdOqxF6LG1Q==}
     engines: {node: '>=18'}
 
-  impeccable@4.10.0:
-    resolution: {integrity: sha512-eEyW+lJiwwHa6mCQEYoILtA98aTfuiIz61oEFkupvvtfYx5/Uodee3xnrUwihcLw5/XxC7ei4VV0H4Xsh08oxw==}
+  impeccable@4.11.1:
+    resolution: {integrity: sha512-XpoQPgPjwgtc9+x/UbWA8crLvbCYThQ+5CJPQeYGJUyGOt4o2wZ6QSnBzsT9Rv3lnXsfdrS2cJxxdyMqpOPA3g==}
     engines: {node: '>=18.19.0'}
     hasBin: true
 
@@ -984,19 +984,19 @@ snapshots:
       tslib: 2.9.1
     optional: true
 
-  '@impeccable/cli-darwin-arm64@0.1.27':
+  '@impeccable/cli-darwin-arm64@0.1.31':
     optional: true
 
-  '@impeccable/cli-darwin-x64@0.1.27':
+  '@impeccable/cli-darwin-x64@0.1.31':
     optional: true
 
-  '@impeccable/cli-linux-arm64@0.1.27':
+  '@impeccable/cli-linux-arm64@0.1.31':
     optional: true
 
-  '@impeccable/cli-linux-x64@0.1.27':
+  '@impeccable/cli-linux-x64@0.1.31':
     optional: true
 
-  '@impeccable/cli-windows-x64@0.1.27':
+  '@impeccable/cli-windows-x64@0.1.31':
     optional: true
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
@@ -1416,13 +1416,13 @@ snapshots:
 
   get-east-asian-width@1.7.0: {}
 
-  impeccable@4.10.0:
+  impeccable@4.11.1:
     optionalDependencies:
-      '@impeccable/cli-darwin-arm64': 0.1.27
-      '@impeccable/cli-darwin-x64': 0.1.27
-      '@impeccable/cli-linux-arm64': 0.1.27
-      '@impeccable/cli-linux-x64': 0.1.27
-      '@impeccable/cli-windows-x64': 0.1.27
+      '@impeccable/cli-darwin-arm64': 0.1.31
+      '@impeccable/cli-darwin-x64': 0.1.31
+      '@impeccable/cli-linux-arm64': 0.1.31
+      '@impeccable/cli-linux-x64': 0.1.31
+      '@impeccable/cli-windows-x64': 0.1.31
 
   jiti@2.7.0:
     optional: true
