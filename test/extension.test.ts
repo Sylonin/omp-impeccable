@@ -1845,6 +1845,7 @@ function loadExtension(
     registerTool(tool: ToolDefinition) {
       tools.set(tool.name, tool);
     },
+    registerMessageRenderer() {},
     sendMessage(
       message: SentMessage['message'],
       options: SentMessage['options'],

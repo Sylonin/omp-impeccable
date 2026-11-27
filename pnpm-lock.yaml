@@ -18,6 +18,9 @@ importers:
       '@oh-my-pi/pi-coding-agent':
         specifier: ^19.2.1
         version: 19.2.1
+      '@oh-my-pi/pi-tui':
+        specifier: ^19.2.1
+        version: 19.2.1
       '@types/node':
         specifier: 24.13.2
         version: 24.13.2

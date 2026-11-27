@@ -20,6 +20,12 @@ import type {
   ToolResultEvent,
 } from '@oh-my-pi/pi-coding-agent/extensibility/extensions/types';
 import {
+  type ImpeccableMessageDetails,
+  renderDesignHookMessage,
+  renderImpeccableMessage,
+} from './message-cards.tsx';
+import { liveCompleteCard, liveReplyCard } from './tool-cards.tsx';
+import {
   agentCommands,
   extensionCommandDescriptions,
   fallbackAgentCommandDescriptions,
@@ -217,7 +223,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       const head = tokens[0] ?? '';
 
       if (head === 'help' || args.trim() === '--help')
-        return display(pi, helpText());
+        return display(pi, helpText(), { title: 'Help' });
       if (head === 'install') return installOrUpdate(pi, live, ctx, 'install');
       if (head === 'update') return installOrUpdate(pi, live, ctx, 'update');
 
@@ -290,6 +296,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     description:
       'Reply to an Impeccable live event after handling generate, steer, manual Apply, or variant mount failure work.',
     parameters: liveReplyParams,
+    ...liveReplyCard,
     async execute(
       _toolCallId,
       params: typeof liveReplyParams._output,
@@ -342,6 +349,7 @@ export default function impeccableExtension(pi: ExtensionAPI) {
     description:
       'Mark Impeccable live accept/carbonize cleanup complete and resume background polling.',
     parameters: liveCompleteParams,
+    ...liveCompleteCard,
     async execute(
       _toolCallId,
       params: typeof liveCompleteParams._output,
@@ -387,6 +395,12 @@ export default function impeccableExtension(pi: ExtensionAPI) {
       };
     },
   });
+
+  pi.registerMessageRenderer<ImpeccableMessageDetails | undefined>(
+    'impeccable',
+    renderImpeccableMessage,
+  );
+  pi.registerMessageRenderer('impeccable-hook', renderDesignHookMessage);
 }
 
 async function startLive(
@@ -436,6 +450,7 @@ async function startLive(
     return display(
       pi,
       `Impeccable live failed:\n\n${run.stderr || run.stdout}`,
+      { tone: 'error' },
     );
 
   if (!boot?.ok) {
@@ -443,6 +458,7 @@ async function startLive(
     display(
       pi,
       `Impeccable live needs setup:\n\n${JSON.stringify(output, null, 2)}`,
+      { tone: 'warning' },
     );
     showTransientStatus(ctx, 'live setup queued');
     sendExtensionPrompt(
@@ -739,6 +755,7 @@ async function stopLive(
     display(
       pi,
       `Impeccable stop failed:\n\n${stopped.stderr || stopped.stdout}`,
+      { tone: 'error' },
     );
   }
 }
@@ -805,7 +822,7 @@ async function installOrUpdate(
         )
       : undefined;
   // One message: a notification right before a displayed message is never painted.
-  if (report) display(pi, `${done}\n\n${report}`);
+  if (report) display(pi, `${done}\n\n${report}`, { title: 'Update' });
   else notifyOrDisplay(pi, ctx, done, 'info');
 }
 
@@ -846,6 +863,7 @@ async function ensureSkill(pi: ExtensionAPI, ctx: ExtensionContext) {
     display(
       pi,
       `Impeccable install failed:\n\n${installed.result.stderr || installed.result.stdout}`,
+      { tone: 'error' },
     );
     return null;
   }
@@ -853,6 +871,7 @@ async function ensureSkill(pi: ExtensionAPI, ctx: ExtensionContext) {
     display(
       pi,
       `Impeccable install ran, but .omp/skills/impeccable was not found after staging the upstream install. Output:\n\n${installed.result.stdout}`,
+      { tone: 'error' },
     );
     return null;
   }
@@ -889,7 +908,9 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
       if (code !== 0) {
         live.pausedFor = 'poll-error';
         renderIndicator(live, ctx);
-        display(pi, `Impeccable live poll failed:\n\n${stderr || stdout}`);
+        display(pi, `Impeccable live poll failed:\n\n${stderr || stdout}`, {
+          tone: 'error',
+        });
         ctx.ui.notify(
           'Impeccable live poll failed; run /impeccable live to resume.',
           'warning',
@@ -903,6 +924,7 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
         display(
           pi,
           `Could not parse Impeccable live event:\n\n${stdout}\n${stderr}`,
+          { tone: 'error' },
         );
         return;
       }
@@ -1004,7 +1026,9 @@ async function pinCommand(
 ) {
   const command = tokens[0] ?? '';
   if (!command) {
-    return display(pi, 'Usage: /impeccable pin <upstream-command>');
+    return display(pi, 'Usage: /impeccable pin <upstream-command>', {
+      tone: 'warning',
+    });
   }
   if (!isSafeCommandName(command) || !isAgentCommand(command)) {
     return notifyOrDisplay(
@@ -1049,7 +1073,9 @@ function unpinCommand(
 ) {
   const command = tokens[0] ?? '';
   if (!command) {
-    return display(pi, 'Usage: /impeccable unpin <upstream-command>');
+    return display(pi, 'Usage: /impeccable unpin <upstream-command>', {
+      tone: 'warning',
+    });
   }
   if (!isSafeCommandName(command)) {
     return notifyOrDisplay(
@@ -1109,7 +1135,7 @@ async function runHooksCommand(
   const note = designHookActive(ctx.cwd)
     ? '\n\nomp-impeccable runs this hook after edit and write tool calls and again when the agent finishes. Ignore any "not wired" line above: upstream checks only harness manifests and cannot see OMP.'
     : '';
-  display(pi, `${output}${note}`);
+  display(pi, `${output}${note}`, { title: 'Hooks' });
 }
 
 // Active once `hooks on` records local consent and the project has not turned the hook off.
@@ -1762,16 +1788,20 @@ function notifyOrDisplay(
   type: 'info' | 'warning' | 'error' = 'info',
 ) {
   if (ctx.hasUI) ctx.ui.notify(content, type);
-  else display(pi, content);
+  else display(pi, content, { tone: type });
 }
 
 // Help, usage and command output are for the user; omp 19.0.0+ keeps them out of the model's context.
-function display(pi: ExtensionAPI, content: string) {
+function display(
+  pi: ExtensionAPI,
+  content: string,
+  details: ImpeccableMessageDetails = {},
+) {
   pi.sendMessage({
     customType: 'impeccable',
     content,
     display: true,
-    details: undefined,
+    details,
     attribution: undefined,
     excludeFromContext: true,
   });

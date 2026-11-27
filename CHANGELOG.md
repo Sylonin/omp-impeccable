@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Draw the plugin's output as its own OMP cards, in the terminal and in Tern. `impeccable_live_reply` and `impeccable_live_complete` results show the event id, the reply status or session outcome, the changed file and that polling resumed, instead of the launcher's raw output. `/impeccable` help, hooks, update and failure output keeps its line breaks and is tinted by severity. Design hook notes render as Markdown and fold after five lines. Needs OMP 19.2.0 or later: earlier versions lack the pi-tui JSX runtime and cannot load the plugin.
 - Poll live mode with `live-poll --json`. Impeccable 4.11 then records an accepted variant within two seconds instead of holding the poll for the whole account upload, and puts the page it was saved to on the event. The plugin shows that page with the accept (`Saved to Impeccable: <url>`).
 - Type-check against `@oh-my-pi/pi-coding-agent` 19.2.1.
 - Keep `/impeccable` help, usage, hooks and poll-failure output out of the model's context. The user still sees it in the transcript. Needs OMP 19.0.0 or later; older versions also send it to the model.

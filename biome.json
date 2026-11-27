@@ -11,7 +11,9 @@
       "package.json",
       "tsconfig.json",
       "extensions/**/*.ts",
-      "test/**/*.ts"
+      "extensions/**/*.tsx",
+      "test/**/*.ts",
+      "test/**/*.tsx"
     ]
   },
   "formatter": {
@@ -32,5 +34,17 @@
   },
   "assist": {
     "enabled": true
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noVoidElementsWithChildren": "off"
+          }
+        }
+      }
+    }
+  ]
 }

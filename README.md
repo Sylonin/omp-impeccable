@@ -32,6 +32,8 @@ Since Impeccable 4.6, `npx impeccable install --providers=omp` installs the skil
 
 ## Install
 
+Needs OMP 19.2.0 or later.
+
 ```bash
 omp plugin install omp-impeccable
 ```
