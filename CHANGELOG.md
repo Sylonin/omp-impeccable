@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Poll live mode with `live-poll --json`. Impeccable 4.11 then records an accepted variant within two seconds instead of holding the poll for the whole account upload, and puts the page it was saved to on the event. The plugin shows that page with the accept (`Saved to Impeccable: <url>`).
 - Type-check against `@oh-my-pi/pi-coding-agent` 19.2.1.
 - Keep `/impeccable` help, usage, hooks and poll-failure output out of the model's context. The user still sees it in the transcript. Needs OMP 19.0.0 or later; older versions also send it to the model.
 - Ask before quitting OMP while the agent is still handling a live event, since quitting then can leave its unfinished edits in source files. Needs OMP 18.18.7 or later; older versions quit without asking.

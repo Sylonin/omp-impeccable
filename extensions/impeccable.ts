@@ -864,9 +864,10 @@ function startPoll(pi: ExtensionAPI, live: LiveState, ctx: ExtensionContext) {
   startIndicator(live, ctx);
   if (live.poll) return;
   const cwd = live.cwd ?? ctx.cwd;
+  // --json bounds an accept's account upload at two seconds and puts the saved page on the event as savedTo.
   const child = spawn(
     join(live.skillRoot, 'scripts', 'impeccable'),
-    ['live-poll'],
+    ['live-poll', '--json'],
     { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   live.poll = child;
@@ -929,12 +930,22 @@ function handleLiveEvent(
   }
   if (event.type === 'prefetch') return startPoll(pi, live, ctx);
 
+  const saved =
+    typeof event.savedTo === 'string'
+      ? `Saved to Impeccable: ${event.savedTo}`
+      : undefined;
   const needsAgent =
     agentReplyEvents.has(event.type) || needsLiveComplete(event);
   if (!needsAgent) {
-    ctx.ui.notify(`Impeccable live: ${event.type}`, 'info');
+    ctx.ui.notify(
+      saved
+        ? `Impeccable live: ${event.type}. ${saved}`
+        : `Impeccable live: ${event.type}`,
+      'info',
+    );
     return startPoll(pi, live, ctx);
   }
+  if (saved) ctx.ui.notify(saved, 'info');
 
   const skillRoot = live.skillRoot;
   if (!skillRoot) return;

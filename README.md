@@ -113,7 +113,7 @@ When the OMP session has a UI and its own environment shows a desktop (no `CI`, 
 
 ### Impeccable account features
 
-A signed-in Impeccable account (`npx impeccable login`) adds background work that the launcher skips while `CI` is set: design health sync, critique and prototype history uploads, daily setup reports, and taste and switch sync. Because OMP sets `CI=true` in every agent shell command, that work does not run from OMP sessions, and the plugin has no Impeccable override for it as it does for decision pages. Set `PI_BASH_NO_CI=1` before starting OMP if you want it; that drops `CI=true` from every agent command, not only Impeccable's. Upstream connects its `impeccable` MCP server and Loop only to Claude Code and Codex (`impeccable loop connect`), so the plugin does not add them to OMP either.
+A signed-in Impeccable account (`npx impeccable login`) adds background work that the launcher skips while `CI` is set: design health sync, critique and prototype history uploads, daily setup reports, and taste and switch sync. Because OMP sets `CI=true` in every agent shell command, that work does not run from commands the agent runs, and the plugin has no Impeccable override for it as it does for decision pages. Set `PI_BASH_NO_CI=1` before starting OMP if you want it; that drops `CI=true` from every agent command, not only Impeccable's. The plugin's own background live poll runs without `CI`, so a variant you accept is saved to your account, and the plugin tells you the page it was saved to. Upstream connects its `impeccable` MCP server and Loop to Claude Code, Codex, Cursor, GitHub Copilot CLI and opencode (`impeccable loop connect`), not to OMP, so the plugin does not add them either.
 
 ## Attribution
 

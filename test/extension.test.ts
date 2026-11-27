@@ -1287,6 +1287,41 @@ Existing /audit command
     });
   });
 
+  test('an accept the account saved tells the user where it landed', async () => {
+    const accept = { type: 'accept', id: 'evt-3' };
+    const savedTo = 'https://app.impeccable.style/prototypes/evt-3';
+    // Upstream adds savedTo only on `live-poll --json`; plain polls print the receipt on stderr.
+    const { project } = makeProject({
+      live: 'console.log(JSON.stringify({ ok: true }));\n',
+      'live-poll': `
+        const event = ${JSON.stringify(accept)};
+        if (process.argv.includes('--json')) event.savedTo = ${JSON.stringify(savedTo)};
+        console.log(JSON.stringify(event));
+      `,
+    });
+    const harness = loadExtension();
+    const ctx = makeContext(project);
+
+    await runCommand(harness, 'live', ctx);
+    await waitFor(
+      () =>
+        ctx.ui.notifications.some((note) =>
+          note.message.startsWith('Impeccable live: accept'),
+        ),
+      'expected the accept to be announced',
+    );
+    await harness.emit('session_shutdown', {}, ctx);
+
+    expect(
+      ctx.ui.notifications.find((note) =>
+        note.message.startsWith('Impeccable live: accept'),
+      ),
+    ).toEqual({
+      message: `Impeccable live: accept. Saved to Impeccable: ${savedTo}`,
+      type: 'info',
+    });
+  });
+
   test('foreground live-poll bash calls are blocked', async () => {
     const harness = loadExtension();
     const ctx = makeContext(root);
